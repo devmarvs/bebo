@@ -1,0 +1,9 @@
+{{ define "content" }}
+<h1>{{ .Title }}</h1>
+<p>Welcome to the bebo web stack.</p>
+<ul>
+  {{ range .Items }}
+  <li>{{ . }}</li>
+  {{ end }}
+</ul>
+{{ end }}
