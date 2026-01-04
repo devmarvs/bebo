@@ -10,13 +10,19 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Go 1.25 (as requested). If you are on a released Go toolchain, downgrade the `go` directive in `go.mod`.
 
 ## Features
-- Custom router with params (`/users/:id`), wildcards (`/assets/*path`), and groups
+- Custom router with params (`/users/:id`), wildcards (`/assets/*path`), groups, and method-not-allowed responses
+- Named routes + path helpers
 - Middleware chain (request ID, recovery, logging, CORS, body limit, timeout, auth, rate limiting)
+- Security headers and CSRF protection
+- Cookie-based session helper with signing
 - JSON and HTML rendering with layouts, template funcs, and reload in dev mode
 - Static file helper with cache headers + ETag
-- Config defaults + env overrides
-- Validation helpers
+- Metrics registry + JSON handler
+- Config defaults + env overrides + JSON config loader
+- Validation helpers (including struct tags)
 - Graceful shutdown helpers
+- Minimal CLI generator
+- DB helpers + SQL migrations runner
 
 ## Quick Start (API)
 ```go
@@ -52,6 +58,12 @@ v1.GET("/users/:id", handler)
 app.Version("v1").GET("/health", handler)
 ```
 
+## Named Routes
+```go
+app.Route("GET", "/users/:id", handler, bebo.WithName("user.show"))
+path, _ := app.Path("user.show", map[string]string{"id": "42"})
+```
+
 ## Static Assets
 ```go
 app.Static("/static", "./public")
@@ -63,10 +75,45 @@ app.Use(
     middleware.CORS(middleware.CORSOptions{AllowedOrigins: []string{"https://example.com"}}),
     middleware.BodyLimit(2<<20),
     middleware.Timeout(5*time.Second),
+    middleware.SecurityHeaders(middleware.DefaultSecurityHeaders()),
 )
 
 limiter := middleware.NewLimiter(5, 10)
 app.GET("/reports", reportsHandler, middleware.RateLimit(limiter))
+```
+
+## CSRF
+```go
+app.Use(middleware.CSRF(middleware.CSRFOptions{}))
+
+app.POST("/submit", func(ctx *bebo.Context) error {
+    token := middleware.CSRFToken(ctx)
+    _ = token
+    return ctx.Text(http.StatusOK, "ok")
+})
+```
+
+## Sessions
+```go
+store := session.NewCookieStore("bebo_session", []byte("secret"))
+
+app.GET("/profile", func(ctx *bebo.Context) error {
+    sess, _ := store.Get(ctx.Request)
+    sess.Set("user_id", "123")
+    _ = sess.Save(ctx.ResponseWriter)
+    return ctx.Text(http.StatusOK, "ok")
+})
+```
+
+## Metrics
+```go
+registry := metrics.New()
+app.Use(middleware.Metrics(registry))
+
+app.GET("/metrics", func(ctx *bebo.Context) error {
+    metrics.Handler(registry).ServeHTTP(ctx.ResponseWriter, ctx.Request)
+    return nil
+})
 ```
 
 ## Auth Scaffolding
@@ -114,7 +161,24 @@ Defaults are in `config.Default()` or `bebo.DefaultConfig()`. You can apply env 
 ```go
 cfg := bebo.ConfigFromEnv("BEBO_", bebo.DefaultConfig())
 ```
+Load JSON config layered with env:
+```go
+cfg, err := bebo.LoadConfig("config.json", "BEBO_")
+```
 Env keys include: `ADDRESS`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `TEMPLATES_DIR`, `LAYOUT_TEMPLATE`, `TEMPLATE_RELOAD`.
+
+## CLI
+```sh
+bebo new ./myapp -module github.com/me/myapp -template
+bebo route add -method GET -path /users/:id -name user.show
+```
+
+## Migrations
+```go
+runner := migrate.New(db, "./migrations")
+_, _ = runner.Up(context.Background())
+```
+Files use `0001_name.up.sql` and `0001_name.down.sql`.
 
 ## Layout
 - `app.go`, `context.go`: core app and request context
@@ -122,8 +186,12 @@ Env keys include: `ADDRESS`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `TEMPLATES_DIR`, `
 - `middleware/`: built-in middleware
 - `render/`: JSON and HTML rendering
 - `assets/`: cache-busting asset helper
-- `config/`: config defaults + env overrides
+- `config/`: config defaults + env overrides + JSON loader
 - `validate/`: basic validation helpers
+- `metrics/`: request metrics
+- `session/`: cookie-backed sessions
+- `db/`: database helpers
+- `migrate/`: SQL migration runner
 - `desktop/`: Fyne helpers
 - `examples/`: API, web, and desktop samples
 

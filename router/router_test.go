@@ -48,6 +48,18 @@ func TestMatch(t *testing.T) {
 	}
 }
 
+func TestAllowed(t *testing.T) {
+	r := New()
+	_, _ = r.Add("GET", "/users/:id")
+	_, _ = r.Add("POST", "/users/:id")
+	_, _ = r.Add("DELETE", "/users/:id")
+
+	allowed := r.Allowed("/users/123")
+	if len(allowed) != 3 {
+		t.Fatalf("expected 3 allowed methods, got %d", len(allowed))
+	}
+}
+
 func TestWildcardValidation(t *testing.T) {
 	r := New()
 	if _, err := r.Add("GET", "/assets/*path/more"); err == nil {

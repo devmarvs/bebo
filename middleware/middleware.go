@@ -37,7 +37,7 @@ func Recover() bebo.Middleware {
 		return func(ctx *bebo.Context) (err error) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					err = apperr.New(apperr.CodeInternal, http.StatusInternalServerError, "panic", fmt.Errorf("%v", rec))
+					err = apperr.Internal("panic", fmt.Errorf("%v", rec))
 				}
 			}()
 			return next(ctx)
@@ -47,6 +47,15 @@ func Recover() bebo.Middleware {
 
 // Logger logs request/response details.
 func Logger() bebo.Middleware {
+	return LoggerWith(DefaultLogFields()...)
+}
+
+// LoggerWith logs request/response details using custom fields.
+func LoggerWith(fields ...LogField) bebo.Middleware {
+	if len(fields) == 0 {
+		fields = DefaultLogFields()
+	}
+
 	return func(next bebo.Handler) bebo.Handler {
 		return func(ctx *bebo.Context) error {
 			start := time.Now()
@@ -57,22 +66,23 @@ func Logger() bebo.Middleware {
 
 			status := recorder.Status()
 			if err != nil {
-				appErr := apperr.As(err)
-				if appErr != nil {
+				if appErr := apperr.As(err); appErr != nil {
 					status = appErr.Status
 				} else if status == 0 {
 					status = http.StatusInternalServerError
 				}
 			}
+			if recorder.status == 0 {
+				recorder.status = status
+			}
 
-			ctx.Logger().Info("request completed",
-				slog.String("method", ctx.Request.Method),
-				slog.String("path", ctx.Request.URL.Path),
-				slog.Int("status", status),
-				slog.Duration("duration", time.Since(start)),
-				slog.Int("bytes", recorder.Bytes()),
-			)
+			duration := time.Since(start)
+			attrs := make([]slog.Attr, 0, len(fields))
+			for _, field := range fields {
+				attrs = append(attrs, field(ctx, recorder, duration))
+			}
 
+			ctx.Logger().Info("request completed", attrs...)
 			return err
 		}
 	}

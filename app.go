@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/devmarvs/bebo/logging"
 	"github.com/devmarvs/bebo/render"
 	"github.com/devmarvs/bebo/router"
+	"github.com/devmarvs/bebo/validate"
 )
 
 // Handler handles a request and returns an error for centralized handling.
@@ -32,12 +34,22 @@ type routeEntry struct {
 	pattern    string
 	handler    Handler
 	middleware []Middleware
+	name       string
+	timeout    time.Duration
+}
+
+// RouteInfo describes a named route.
+type RouteInfo struct {
+	Name    string
+	Method  string
+	Pattern string
 }
 
 // App is the main framework entrypoint.
 type App struct {
 	router       *router.Router
 	routes       map[router.RouteID]*routeEntry
+	routesByName map[string]router.RouteID
 	middleware   []Middleware
 	renderer     *render.Engine
 	logger       *slog.Logger
@@ -56,6 +68,7 @@ func New(options ...Option) *App {
 	app := &App{
 		router:       router.New(),
 		routes:       make(map[router.RouteID]*routeEntry),
+		routesByName: make(map[string]router.RouteID),
 		renderer:     nil,
 		logger:       nil,
 		config:       cfg,
@@ -141,48 +154,113 @@ func (a *App) Use(middleware ...Middleware) {
 	a.middleware = append(a.middleware, middleware...)
 }
 
+// Route registers a route with options.
+func (a *App) Route(method, path string, handler Handler, options ...RouteOption) {
+	a.handleWithOptions(method, path, handler, nil, options...)
+}
+
 // GET registers a GET route.
 func (a *App) GET(path string, handler Handler, middleware ...Middleware) {
-	a.handle(http.MethodGet, path, handler, middleware...)
+	a.handleWithOptions(http.MethodGet, path, handler, middleware)
 }
 
 // POST registers a POST route.
 func (a *App) POST(path string, handler Handler, middleware ...Middleware) {
-	a.handle(http.MethodPost, path, handler, middleware...)
+	a.handleWithOptions(http.MethodPost, path, handler, middleware)
 }
 
 // PUT registers a PUT route.
 func (a *App) PUT(path string, handler Handler, middleware ...Middleware) {
-	a.handle(http.MethodPut, path, handler, middleware...)
+	a.handleWithOptions(http.MethodPut, path, handler, middleware)
 }
 
 // PATCH registers a PATCH route.
 func (a *App) PATCH(path string, handler Handler, middleware ...Middleware) {
-	a.handle(http.MethodPatch, path, handler, middleware...)
+	a.handleWithOptions(http.MethodPatch, path, handler, middleware)
 }
 
 // DELETE registers a DELETE route.
 func (a *App) DELETE(path string, handler Handler, middleware ...Middleware) {
-	a.handle(http.MethodDelete, path, handler, middleware...)
+	a.handleWithOptions(http.MethodDelete, path, handler, middleware)
 }
 
 // Handle registers a route for an arbitrary method.
 func (a *App) Handle(method, path string, handler Handler, middleware ...Middleware) {
-	a.handle(method, path, handler, middleware...)
+	a.handleWithOptions(method, path, handler, middleware)
 }
 
-func (a *App) handle(method, path string, handler Handler, middleware ...Middleware) {
+// RouteInfo returns metadata for a named route.
+func (a *App) RouteInfo(name string) (RouteInfo, bool) {
+	id, ok := a.routesByName[name]
+	if !ok {
+		return RouteInfo{}, false
+	}
+	entry, ok := a.routes[id]
+	if !ok {
+		return RouteInfo{}, false
+	}
+	return RouteInfo{Name: entry.name, Method: entry.method, Pattern: entry.pattern}, true
+}
+
+// Routes returns all named routes.
+func (a *App) Routes() []RouteInfo {
+	items := make([]RouteInfo, 0, len(a.routesByName))
+	for name := range a.routesByName {
+		if info, ok := a.RouteInfo(name); ok {
+			items = append(items, info)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Name == items[j].Name {
+			return items[i].Pattern < items[j].Pattern
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items
+}
+
+// Path builds a URL path from a named route and params.
+func (a *App) Path(name string, params map[string]string) (string, bool) {
+	info, ok := a.RouteInfo(name)
+	if !ok {
+		return "", false
+	}
+	return buildPath(info.Pattern, params)
+}
+
+func (a *App) handleWithOptions(method, path string, handler Handler, middleware []Middleware, options ...RouteOption) {
+	cfg := routeConfig{}
+	for _, opt := range options {
+		opt(&cfg)
+	}
+
+	if cfg.name != "" {
+		if _, exists := a.routesByName[cfg.name]; exists {
+			a.logger.Error("route name already registered", slog.String("name", cfg.name))
+			return
+		}
+	}
+
 	id, err := a.router.Add(method, path)
 	if err != nil {
 		a.logger.Error("route registration failed", slog.String("method", method), slog.String("path", path), slog.String("error", err.Error()))
 		return
 	}
 
+	combined := append([]Middleware{}, middleware...)
+	combined = append(combined, cfg.middleware...)
+
 	a.routes[id] = &routeEntry{
 		method:     method,
 		pattern:    path,
 		handler:    handler,
-		middleware: middleware,
+		middleware: combined,
+		name:       cfg.name,
+		timeout:    cfg.timeout,
+	}
+
+	if cfg.name != "" {
+		a.routesByName[cfg.name] = id
 	}
 }
 
@@ -190,16 +268,18 @@ func (a *App) handle(method, path string, handler Handler, middleware ...Middlew
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, params, ok := a.router.Match(r.Method, r.URL.Path)
 	if !ok {
+		allowed := a.router.Allowed(r.URL.Path)
 		ctx := NewContext(w, r, router.Params{}, a)
-		handler := func(ctx *Context) error {
-			return apperr.New(apperr.CodeNotFound, http.StatusNotFound, "not found", nil)
+		if len(allowed) > 0 {
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+			a.runWithMiddleware(ctx, func(ctx *Context) error {
+				return apperr.MethodNotAllowed("method not allowed", nil)
+			})
+			return
 		}
-		for i := len(a.middleware) - 1; i >= 0; i-- {
-			handler = a.middleware[i](handler)
-		}
-		if err := handler(ctx); err != nil {
-			a.errorHandler(ctx, err)
-		}
+		a.runWithMiddleware(ctx, func(ctx *Context) error {
+			return apperr.NotFound("not found", nil)
+		})
 		return
 	}
 
@@ -212,6 +292,9 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := len(a.middleware) - 1; i >= 0; i-- {
 		h = a.middleware[i](h)
+	}
+	if entry.timeout > 0 {
+		h = TimeoutHandler(h, entry.timeout)
 	}
 
 	if err := h(ctx); err != nil {
@@ -276,6 +359,15 @@ func (a *App) RunWithSignals() error {
 	return a.Run(ctx)
 }
 
+func (a *App) runWithMiddleware(ctx *Context, handler Handler) {
+	for i := len(a.middleware) - 1; i >= 0; i-- {
+		handler = a.middleware[i](handler)
+	}
+	if err := handler(ctx); err != nil {
+		a.errorHandler(ctx, err)
+	}
+}
+
 func defaultErrorHandler(ctx *Context, err error) {
 	appErr := apperr.As(err)
 	status := http.StatusInternalServerError
@@ -293,13 +385,22 @@ func defaultErrorHandler(ctx *Context, err error) {
 		slog.String("error", err.Error()),
 	)
 
+	var fields []validate.FieldError
+	if validationErrors, ok := validate.As(err); ok {
+		fields = validationErrors.Fields
+	}
+
 	if wantsJSON(ctx.Request) {
-		_ = ctx.JSON(status, map[string]any{
+		payload := map[string]any{
 			"error": map[string]any{
 				"code":    code,
 				"message": message,
 			},
-		})
+		}
+		if len(fields) > 0 {
+			payload["error"].(map[string]any)["fields"] = fields
+		}
+		_ = ctx.JSON(status, payload)
 		return
 	}
 

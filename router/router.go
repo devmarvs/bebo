@@ -84,6 +84,29 @@ func (r *Router) Match(method, path string) (RouteID, Params, bool) {
 	return 0, nil, false
 }
 
+// Allowed returns allowed methods for a given path.
+func (r *Router) Allowed(path string) []string {
+	if path == "" {
+		path = "/"
+	}
+
+	parts := splitPath(path)
+	methods := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, rt := range r.routes {
+		if matchSegments(rt.segments, parts, nil) {
+			if _, ok := seen[rt.method]; ok {
+				continue
+			}
+			seen[rt.method] = struct{}{}
+			methods = append(methods, rt.method)
+		}
+	}
+
+	return methods
+}
+
 func methodMatches(routeMethod, requestMethod string) bool {
 	return routeMethod == "*" || routeMethod == requestMethod
 }
@@ -150,9 +173,13 @@ func matchSegments(pattern []segment, parts []string, params Params) bool {
 			if pi >= len(parts) {
 				return false
 			}
-			params[seg.value] = parts[pi]
+			if params != nil {
+				params[seg.value] = parts[pi]
+			}
 		case segmentWildcard:
-			params[seg.value] = strings.Join(parts[pi:], "/")
+			if params != nil {
+				params[seg.value] = strings.Join(parts[pi:], "/")
+			}
 			return true
 		}
 		pi++

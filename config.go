@@ -14,3 +14,13 @@ func DefaultConfig() config.Config {
 func ConfigFromEnv(prefix string, base config.Config) config.Config {
 	return config.LoadFromEnv(prefix, base)
 }
+
+// ConfigFromFile loads config from a JSON file onto the base config.
+func ConfigFromFile(path string, base config.Config) (config.Config, error) {
+	return config.LoadFromFile(path, base)
+}
+
+// LoadConfig loads config from file and applies env overrides.
+func LoadConfig(path, envPrefix string) (config.Config, error) {
+	return config.Load(path, envPrefix)
+}

@@ -7,15 +7,16 @@ import (
 )
 
 const (
-	CodeInternal        = "internal"
-	CodeNotFound        = "not_found"
-	CodeBadRequest      = "bad_request"
-	CodeValidation      = "validation"
-	CodeUnauthorized    = "unauthorized"
-	CodeForbidden       = "forbidden"
-	CodePayloadTooLarge = "payload_too_large"
-	CodeRateLimited     = "rate_limited"
-	CodeTimeout         = "timeout"
+	CodeInternal         = "internal"
+	CodeNotFound         = "not_found"
+	CodeBadRequest       = "bad_request"
+	CodeValidation       = "validation"
+	CodeUnauthorized     = "unauthorized"
+	CodeForbidden        = "forbidden"
+	CodePayloadTooLarge  = "payload_too_large"
+	CodeRateLimited      = "rate_limited"
+	CodeTimeout          = "timeout"
+	CodeMethodNotAllowed = "method_not_allowed"
 )
 
 // Error represents a structured application error.
@@ -79,6 +80,11 @@ func RateLimited(message string, cause error) *Error {
 // Timeout creates a timeout error.
 func Timeout(message string, cause error) *Error {
 	return New(CodeTimeout, http.StatusGatewayTimeout, message, cause)
+}
+
+// MethodNotAllowed creates a method not allowed error.
+func MethodNotAllowed(message string, cause error) *Error {
+	return New(CodeMethodNotAllowed, http.StatusMethodNotAllowed, message, cause)
 }
 
 func (e *Error) Error() string {

@@ -28,41 +28,46 @@ func (g *Group) Group(prefix string, middleware ...Middleware) *Group {
 	return &Group{app: g.app, prefix: joined, middleware: combined}
 }
 
+// Route registers a route with options in the group.
+func (g *Group) Route(method, path string, handler Handler, options ...RouteOption) {
+	g.handle(method, path, handler, nil, options...)
+}
+
 // GET registers a GET route in the group.
 func (g *Group) GET(path string, handler Handler, middleware ...Middleware) {
-	g.handle("GET", path, handler, middleware...)
+	g.handle("GET", path, handler, middleware)
 }
 
 // POST registers a POST route in the group.
 func (g *Group) POST(path string, handler Handler, middleware ...Middleware) {
-	g.handle("POST", path, handler, middleware...)
+	g.handle("POST", path, handler, middleware)
 }
 
 // PUT registers a PUT route in the group.
 func (g *Group) PUT(path string, handler Handler, middleware ...Middleware) {
-	g.handle("PUT", path, handler, middleware...)
+	g.handle("PUT", path, handler, middleware)
 }
 
 // PATCH registers a PATCH route in the group.
 func (g *Group) PATCH(path string, handler Handler, middleware ...Middleware) {
-	g.handle("PATCH", path, handler, middleware...)
+	g.handle("PATCH", path, handler, middleware)
 }
 
 // DELETE registers a DELETE route in the group.
 func (g *Group) DELETE(path string, handler Handler, middleware ...Middleware) {
-	g.handle("DELETE", path, handler, middleware...)
+	g.handle("DELETE", path, handler, middleware)
 }
 
 // Handle registers a route in the group for an arbitrary method.
 func (g *Group) Handle(method, path string, handler Handler, middleware ...Middleware) {
-	g.handle(method, path, handler, middleware...)
+	g.handle(method, path, handler, middleware)
 }
 
-func (g *Group) handle(method, path string, handler Handler, middleware ...Middleware) {
+func (g *Group) handle(method, path string, handler Handler, middleware []Middleware, options ...RouteOption) {
 	fullPath := joinPaths(g.prefix, path)
 	combined := append([]Middleware{}, g.middleware...)
 	combined = append(combined, middleware...)
-	g.app.handle(method, fullPath, handler, combined...)
+	g.app.handleWithOptions(method, fullPath, handler, combined, options...)
 }
 
 func joinPaths(base, path string) string {
