@@ -7,7 +7,18 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// FuncMap defines template functions.
+type FuncMap = template.FuncMap
+
+// Options configures the template engine.
+type Options struct {
+	Layout string
+	Funcs  FuncMap
+	Reload bool
+}
 
 // RenderFunc allows custom rendering.
 type RenderFunc func(http.ResponseWriter) error
@@ -18,12 +29,37 @@ type Engine struct {
 	layout    string
 	templates map[string]*template.Template
 	loaded    bool
+	funcs     FuncMap
+	reload    bool
+	mu        sync.RWMutex
 }
 
 // NewEngine builds a template engine and loads templates.
 func NewEngine(dir, layout string) (*Engine, error) {
-	engine := &Engine{dir: dir, layout: layout}
+	return NewEngineWithOptions(dir, Options{Layout: layout})
+}
+
+// NewEngineWithOptions builds a template engine with options.
+func NewEngineWithOptions(dir string, options Options) (*Engine, error) {
+	engine := &Engine{dir: dir, layout: options.Layout, funcs: options.Funcs, reload: options.Reload}
 	return engine, engine.Load()
+}
+
+// AddFuncs registers template functions.
+func (e *Engine) AddFuncs(funcs FuncMap) error {
+	e.mu.Lock()
+	if e.funcs == nil {
+		e.funcs = FuncMap{}
+	}
+	for key, fn := range funcs {
+		e.funcs[key] = fn
+	}
+	e.mu.Unlock()
+
+	if e.loaded {
+		return e.Load()
+	}
+	return nil
 }
 
 // Load parses templates from disk.
@@ -45,31 +81,43 @@ func (e *Engine) Load() error {
 		layoutPath = filepath.Join(e.dir, e.layout)
 	}
 
-	e.templates = make(map[string]*template.Template)
+	templates := make(map[string]*template.Template)
 	for _, file := range entries {
 		if layoutPath != "" && filepath.Clean(file) == filepath.Clean(layoutPath) {
 			continue
 		}
 
 		name := filepath.Base(file)
-		tmpl, err := parseTemplate(layoutPath, file)
+		tmpl, err := parseTemplate(layoutPath, file, e.funcs)
 		if err != nil {
 			return err
 		}
-		e.templates[name] = tmpl
+		templates[name] = tmpl
 	}
 
-	if len(e.templates) == 0 {
+	if len(templates) == 0 {
 		return errors.New("no page templates found")
 	}
 
+	e.mu.Lock()
+	e.templates = templates
 	e.loaded = true
+	e.mu.Unlock()
+
 	return nil
 }
 
 // Render writes a template response.
 func (e *Engine) Render(w http.ResponseWriter, status int, name string, data any) error {
+	if e.reload {
+		if err := e.Load(); err != nil {
+			return err
+		}
+	}
+
+	e.mu.RLock()
 	if !e.loaded || len(e.templates) == 0 {
+		e.mu.RUnlock()
 		return http.ErrMissingFile
 	}
 
@@ -77,6 +125,8 @@ func (e *Engine) Render(w http.ResponseWriter, status int, name string, data any
 	if !ok && !strings.HasSuffix(name, ".html") {
 		tmpl, ok = e.templates[name+".html"]
 	}
+	e.mu.RUnlock()
+
 	if !ok {
 		return http.ErrMissingFile
 	}
@@ -107,9 +157,13 @@ func Custom(w http.ResponseWriter, status int, fn RenderFunc) error {
 	return fn(w)
 }
 
-func parseTemplate(layoutPath, pagePath string) (*template.Template, error) {
-	if layoutPath == "" {
-		return template.ParseFiles(pagePath)
+func parseTemplate(layoutPath, pagePath string, funcs FuncMap) (*template.Template, error) {
+	base := template.New(filepath.Base(pagePath))
+	if funcs != nil {
+		base = base.Funcs(template.FuncMap(funcs))
 	}
-	return template.ParseFiles(layoutPath, pagePath)
+	if layoutPath == "" {
+		return base.ParseFiles(pagePath)
+	}
+	return base.ParseFiles(layoutPath, pagePath)
 }

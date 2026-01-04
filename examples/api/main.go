@@ -33,12 +33,12 @@ func main() {
 			return err
 		}
 		if req.Name == "" {
-			return apperr.New(apperr.CodeValidation, http.StatusBadRequest, "name is required", nil)
+			return apperr.Validation("name is required", nil)
 		}
 		return ctx.JSON(http.StatusCreated, map[string]string{"status": "created"})
 	})
 
-	if err := app.ListenAndServe(); err != nil {
+	if err := app.RunWithSignals(); err != nil {
 		log.Fatal(err)
 	}
 }

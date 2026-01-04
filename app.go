@@ -1,10 +1,14 @@
 package bebo
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/devmarvs/bebo/apperr"
@@ -38,6 +42,7 @@ type App struct {
 	renderer     *render.Engine
 	logger       *slog.Logger
 	config       config.Config
+	templateOpts render.Options
 	errorHandler ErrorHandler
 }
 
@@ -54,6 +59,7 @@ func New(options ...Option) *App {
 		renderer:     nil,
 		logger:       nil,
 		config:       cfg,
+		templateOpts: render.Options{Layout: cfg.LayoutTemplate, Reload: cfg.TemplateReload},
 		errorHandler: defaultErrorHandler,
 	}
 
@@ -66,7 +72,7 @@ func New(options ...Option) *App {
 	}
 
 	if app.renderer == nil && app.config.TemplatesDir != "" {
-		engine, err := render.NewEngine(app.config.TemplatesDir, app.config.LayoutTemplate)
+		engine, err := render.NewEngineWithOptions(app.config.TemplatesDir, app.templateOpts)
 		if err != nil {
 			app.logger.Error("template load failed", slog.String("error", err.Error()))
 		} else {
@@ -81,6 +87,8 @@ func New(options ...Option) *App {
 func WithConfig(cfg config.Config) Option {
 	return func(app *App) {
 		app.config = cfg
+		app.templateOpts.Layout = cfg.LayoutTemplate
+		app.templateOpts.Reload = cfg.TemplateReload
 	}
 }
 
@@ -95,6 +103,29 @@ func WithLogger(logger *slog.Logger) Option {
 func WithRenderer(engine *render.Engine) Option {
 	return func(app *App) {
 		app.renderer = engine
+	}
+}
+
+// WithTemplateFuncs registers template functions for the built-in renderer.
+func WithTemplateFuncs(funcs render.FuncMap) Option {
+	return func(app *App) {
+		if app.renderer != nil {
+			_ = app.renderer.AddFuncs(funcs)
+			return
+		}
+		if app.templateOpts.Funcs == nil {
+			app.templateOpts.Funcs = render.FuncMap{}
+		}
+		for key, fn := range funcs {
+			app.templateOpts.Funcs[key] = fn
+		}
+	}
+}
+
+// WithTemplateReload enables template reloading for development.
+func WithTemplateReload(enabled bool) Option {
+	return func(app *App) {
+		app.templateOpts.Reload = enabled
 	}
 }
 
@@ -190,22 +221,59 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server using config values.
 func (a *App) ListenAndServe() error {
-	server := &http.Server{
-		Addr:              a.config.Address,
-		Handler:           a,
-		ReadTimeout:       a.config.ReadTimeout,
-		WriteTimeout:      a.config.WriteTimeout,
-		IdleTimeout:       a.config.IdleTimeout,
-		ReadHeaderTimeout: a.config.ReadHeaderTimeout,
-		MaxHeaderBytes:    a.config.MaxHeaderBytes,
-	}
-
+	server := a.newServer()
 	a.logger.Info("server starting", slog.String("address", a.config.Address))
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// ListenAndServeTLS starts the HTTPS server using config values.
+func (a *App) ListenAndServeTLS(certFile, keyFile string) error {
+	server := a.newServer()
+	a.logger.Info("server starting", slog.String("address", a.config.Address))
+
+	if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// Run starts the server and shuts down when the context is canceled.
+func (a *App) Run(ctx context.Context) error {
+	server := a.newServer()
+	errCh := make(chan error, 1)
+
+	go func() {
+		a.logger.Info("server starting", slog.String("address", a.config.Address))
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.config.ShutdownTimeout)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		err := <-errCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+}
+
+// RunWithSignals starts the server and handles SIGINT/SIGTERM for shutdown.
+func (a *App) RunWithSignals() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return a.Run(ctx)
 }
 
 func defaultErrorHandler(ctx *Context, err error) {
@@ -246,4 +314,16 @@ func wantsJSON(r *http.Request) bool {
 // ShutdownTimeout returns the configured graceful shutdown timeout.
 func (a *App) ShutdownTimeout() time.Duration {
 	return a.config.ShutdownTimeout
+}
+
+func (a *App) newServer() *http.Server {
+	return &http.Server{
+		Addr:              a.config.Address,
+		Handler:           a,
+		ReadTimeout:       a.config.ReadTimeout,
+		WriteTimeout:      a.config.WriteTimeout,
+		IdleTimeout:       a.config.IdleTimeout,
+		ReadHeaderTimeout: a.config.ReadHeaderTimeout,
+		MaxHeaderBytes:    a.config.MaxHeaderBytes,
+	}
 }

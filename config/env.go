@@ -49,6 +49,11 @@ func LoadFromEnv(prefix string, base Config) Config {
 	if value := get("LAYOUT_TEMPLATE"); value != "" {
 		base.LayoutTemplate = value
 	}
+	if value := get("TEMPLATE_RELOAD"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			base.TemplateReload = enabled
+		}
+	}
 	if value := get("LOG_LEVEL"); value != "" {
 		base.LogLevel = value
 	}

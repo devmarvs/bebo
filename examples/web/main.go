@@ -32,7 +32,7 @@ func main() {
 		return ctx.HTML(http.StatusOK, "home.html", data)
 	})
 
-	if err := app.ListenAndServe(); err != nil {
+	if err := app.RunWithSignals(); err != nil {
 		log.Fatal(err)
 	}
 }

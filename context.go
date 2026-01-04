@@ -2,6 +2,7 @@ package bebo
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -70,7 +71,7 @@ func (c *Context) Text(status int, message string) error {
 // HTML renders a template.
 func (c *Context) HTML(status int, name string, data any) error {
 	if c.app.renderer == nil {
-		return apperr.New(apperr.CodeInternal, http.StatusInternalServerError, "template engine not configured", nil)
+		return apperr.Internal("template engine not configured", nil)
 	}
 	return c.app.renderer.Render(c.ResponseWriter, status, name, data)
 }
@@ -80,10 +81,14 @@ func (c *Context) BindJSON(dst any) error {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		return apperr.New(apperr.CodeBadRequest, http.StatusBadRequest, "invalid JSON", err)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return apperr.PayloadTooLarge("request body too large", err)
+		}
+		return apperr.BadRequest("invalid JSON", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return apperr.New(apperr.CodeBadRequest, http.StatusBadRequest, "unexpected JSON payload", err)
+		return apperr.BadRequest("unexpected JSON payload", err)
 	}
 	return nil
 }

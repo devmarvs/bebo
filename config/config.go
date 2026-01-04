@@ -14,6 +14,7 @@ type Config struct {
 
 	TemplatesDir   string
 	LayoutTemplate string
+	TemplateReload bool
 
 	LogLevel  string
 	LogFormat string
@@ -31,6 +32,7 @@ func Default() Config {
 		MaxHeaderBytes:    1 << 20,
 		TemplatesDir:      "",
 		LayoutTemplate:    "",
+		TemplateReload:    false,
 		LogLevel:          "info",
 		LogFormat:         "text",
 	}

@@ -3,15 +3,19 @@ package apperr
 import (
 	"errors"
 	"fmt"
+	"net/http"
 )
 
 const (
-	CodeInternal     = "internal"
-	CodeNotFound     = "not_found"
-	CodeBadRequest   = "bad_request"
-	CodeValidation   = "validation"
-	CodeUnauthorized = "unauthorized"
-	CodeForbidden    = "forbidden"
+	CodeInternal        = "internal"
+	CodeNotFound        = "not_found"
+	CodeBadRequest      = "bad_request"
+	CodeValidation      = "validation"
+	CodeUnauthorized    = "unauthorized"
+	CodeForbidden       = "forbidden"
+	CodePayloadTooLarge = "payload_too_large"
+	CodeRateLimited     = "rate_limited"
+	CodeTimeout         = "timeout"
 )
 
 // Error represents a structured application error.
@@ -30,6 +34,51 @@ func New(code string, status int, message string, cause error) *Error {
 		Message: message,
 		Cause:   cause,
 	}
+}
+
+// Internal creates an internal error.
+func Internal(message string, cause error) *Error {
+	return New(CodeInternal, http.StatusInternalServerError, message, cause)
+}
+
+// NotFound creates a not found error.
+func NotFound(message string, cause error) *Error {
+	return New(CodeNotFound, http.StatusNotFound, message, cause)
+}
+
+// BadRequest creates a bad request error.
+func BadRequest(message string, cause error) *Error {
+	return New(CodeBadRequest, http.StatusBadRequest, message, cause)
+}
+
+// Validation creates a validation error.
+func Validation(message string, cause error) *Error {
+	return New(CodeValidation, http.StatusBadRequest, message, cause)
+}
+
+// Unauthorized creates an unauthorized error.
+func Unauthorized(message string, cause error) *Error {
+	return New(CodeUnauthorized, http.StatusUnauthorized, message, cause)
+}
+
+// Forbidden creates a forbidden error.
+func Forbidden(message string, cause error) *Error {
+	return New(CodeForbidden, http.StatusForbidden, message, cause)
+}
+
+// PayloadTooLarge creates a payload too large error.
+func PayloadTooLarge(message string, cause error) *Error {
+	return New(CodePayloadTooLarge, http.StatusRequestEntityTooLarge, message, cause)
+}
+
+// RateLimited creates a rate limited error.
+func RateLimited(message string, cause error) *Error {
+	return New(CodeRateLimited, http.StatusTooManyRequests, message, cause)
+}
+
+// Timeout creates a timeout error.
+func Timeout(message string, cause error) *Error {
+	return New(CodeTimeout, http.StatusGatewayTimeout, message, cause)
 }
 
 func (e *Error) Error() string {
