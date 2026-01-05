@@ -40,6 +40,14 @@ func TestPath(t *testing.T) {
 		t.Fatalf("expected /users/42, got %s", path)
 	}
 
+	path, ok = app.PathWithQuery("user.show", map[string]string{"id": "42"}, map[string]string{"q": "test"})
+	if !ok {
+		t.Fatalf("expected path with query")
+	}
+	if path != "/users/42?q=test" {
+		t.Fatalf("expected /users/42?q=test, got %s", path)
+	}
+
 	if _, ok := app.Path("user.show", map[string]string{}); ok {
 		t.Fatalf("expected missing param to fail")
 	}

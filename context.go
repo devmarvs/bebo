@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/devmarvs/bebo/apperr"
 	"github.com/devmarvs/bebo/render"
@@ -37,9 +38,87 @@ func (c *Context) Param(name string) string {
 	return c.Params[name]
 }
 
+// ParamInt returns a route param as an int.
+func (c *Context) ParamInt(name string) (int, error) {
+	value := c.Param(name)
+	if value == "" {
+		return 0, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, apperr.BadRequest(name+" must be an integer", err)
+	}
+	return parsed, nil
+}
+
+// ParamInt64 returns a route param as an int64.
+func (c *Context) ParamInt64(name string) (int64, error) {
+	value := c.Param(name)
+	if value == "" {
+		return 0, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, apperr.BadRequest(name+" must be an integer", err)
+	}
+	return parsed, nil
+}
+
+// ParamBool returns a route param as a bool.
+func (c *Context) ParamBool(name string) (bool, error) {
+	value := c.Param(name)
+	if value == "" {
+		return false, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, apperr.BadRequest(name+" must be a boolean", err)
+	}
+	return parsed, nil
+}
+
 // Query returns a query param.
 func (c *Context) Query(name string) string {
 	return c.Request.URL.Query().Get(name)
+}
+
+// QueryInt returns a query param as an int.
+func (c *Context) QueryInt(name string) (int, error) {
+	value := c.Query(name)
+	if value == "" {
+		return 0, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, apperr.BadRequest(name+" must be an integer", err)
+	}
+	return parsed, nil
+}
+
+// QueryInt64 returns a query param as an int64.
+func (c *Context) QueryInt64(name string) (int64, error) {
+	value := c.Query(name)
+	if value == "" {
+		return 0, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, apperr.BadRequest(name+" must be an integer", err)
+	}
+	return parsed, nil
+}
+
+// QueryBool returns a query param as a bool.
+func (c *Context) QueryBool(name string) (bool, error) {
+	value := c.Query(name)
+	if value == "" {
+		return false, apperr.BadRequest(name+" is required", nil)
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, apperr.BadRequest(name+" must be a boolean", err)
+	}
+	return parsed, nil
 }
 
 // Set stores a value in the context.

@@ -60,6 +60,28 @@ func TestAllowed(t *testing.T) {
 	}
 }
 
+func TestHostMatching(t *testing.T) {
+	r := New()
+	idWeb, _ := r.AddWithHost("GET", "example.com", "/")
+	idAPI, _ := r.AddWithHost("GET", "api.example.com", "/")
+	idWildcard, _ := r.AddWithHost("GET", "*.example.com", "/wild")
+
+	id, _, ok := r.MatchHost("GET", "example.com", "/")
+	if !ok || id != idWeb {
+		t.Fatalf("expected exact host match")
+	}
+
+	id, _, ok = r.MatchHost("GET", "api.example.com", "/")
+	if !ok || id != idAPI {
+		t.Fatalf("expected api host match")
+	}
+
+	id, _, ok = r.MatchHost("GET", "foo.example.com", "/wild")
+	if !ok || id != idWildcard {
+		t.Fatalf("expected wildcard host match")
+	}
+}
+
 func TestWildcardValidation(t *testing.T) {
 	r := New()
 	if _, err := r.Add("GET", "/assets/*path/more"); err == nil {

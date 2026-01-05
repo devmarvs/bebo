@@ -10,6 +10,7 @@ type SecurityHeadersOptions struct {
 	ReferrerPolicy            string
 	ContentSecurityPolicy     string
 	PermissionsPolicy         string
+	StrictTransportSecurity   string
 	CrossOriginOpenerPolicy   string
 	CrossOriginEmbedderPolicy string
 	CrossOriginResourcePolicy string
@@ -56,6 +57,9 @@ func SecurityHeaders(options SecurityHeadersOptions) bebo.Middleware {
 			}
 			if options.PermissionsPolicy != "" {
 				headers.Set("Permissions-Policy", options.PermissionsPolicy)
+			}
+			if options.StrictTransportSecurity != "" {
+				headers.Set("Strict-Transport-Security", options.StrictTransportSecurity)
 			}
 			if options.CrossOriginOpenerPolicy != "" {
 				headers.Set("Cross-Origin-Opener-Policy", options.CrossOriginOpenerPolicy)

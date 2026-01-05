@@ -21,16 +21,76 @@ type Migration struct {
 	DownPath string
 }
 
+// PlanEntry describes a migration and whether it has been applied.
+type PlanEntry struct {
+	Migration
+	Applied bool
+}
+
+// Locker handles migration locking.
+type Locker interface {
+	Lock(context.Context, *sql.DB) error
+	Unlock(context.Context, *sql.DB) error
+}
+
+// AdvisoryLocker uses PostgreSQL advisory locks.
+type AdvisoryLocker struct {
+	ID int64
+}
+
+// Lock acquires a PostgreSQL advisory lock.
+func (a AdvisoryLocker) Lock(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", a.ID)
+	return err
+}
+
+// Unlock releases a PostgreSQL advisory lock.
+func (a AdvisoryLocker) Unlock(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", a.ID)
+	return err
+}
+
 // Runner executes migrations from a directory.
 type Runner struct {
-	DB    *sql.DB
-	Dir   string
-	Table string
+	DB     *sql.DB
+	Dir    string
+	Table  string
+	Locker Locker
 }
 
 // New creates a new Runner.
 func New(db *sql.DB, dir string) *Runner {
 	return &Runner{DB: db, Dir: dir, Table: "schema_migrations"}
+}
+
+// Plan returns a migration plan, optionally marking applied migrations.
+func (r *Runner) Plan(ctx context.Context) ([]PlanEntry, error) {
+	migrations, err := r.loadMigrations()
+	if err != nil {
+		return nil, err
+	}
+
+	appliedSet := make(map[int]struct{})
+	if r.DB != nil {
+		if err := r.ensureTable(ctx); err != nil {
+			return nil, err
+		}
+		applied, err := r.appliedVersions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range applied {
+			appliedSet[v] = struct{}{}
+		}
+	}
+
+	plan := make([]PlanEntry, 0, len(migrations))
+	for _, migration := range migrations {
+		_, applied := appliedSet[migration.Version]
+		plan = append(plan, PlanEntry{Migration: migration, Applied: applied})
+	}
+
+	return plan, nil
 }
 
 // Up applies all pending migrations.
@@ -40,6 +100,14 @@ func (r *Runner) Up(ctx context.Context) (int, error) {
 	}
 	if err := r.ensureTable(ctx); err != nil {
 		return 0, err
+	}
+	if r.Locker != nil {
+		if err := r.Locker.Lock(ctx, r.DB); err != nil {
+			return 0, err
+		}
+		defer func() {
+			_ = r.Locker.Unlock(ctx, r.DB)
+		}()
 	}
 
 	migrations, err := r.loadMigrations()
@@ -84,6 +152,14 @@ func (r *Runner) Down(ctx context.Context, steps int) (int, error) {
 	if err := r.ensureTable(ctx); err != nil {
 		return 0, err
 	}
+	if r.Locker != nil {
+		if err := r.Locker.Lock(ctx, r.DB); err != nil {
+			return 0, err
+		}
+		defer func() {
+			_ = r.Locker.Unlock(ctx, r.DB)
+		}()
+	}
 
 	migrations, err := r.loadMigrations()
 	if err != nil {
@@ -116,6 +192,12 @@ func (r *Runner) Down(ctx context.Context, steps int) (int, error) {
 	}
 
 	return count, nil
+}
+
+// List returns migrations found in a directory.
+func List(dir string) ([]Migration, error) {
+	runner := New(nil, dir)
+	return runner.loadMigrations()
 }
 
 func (r *Runner) ensureTable(ctx context.Context) error {

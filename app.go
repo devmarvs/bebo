@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +32,7 @@ type ErrorHandler func(*Context, error)
 
 type routeEntry struct {
 	method     string
+	host       string
 	pattern    string
 	handler    Handler
 	middleware []Middleware
@@ -42,6 +44,7 @@ type routeEntry struct {
 type RouteInfo struct {
 	Name    string
 	Method  string
+	Host    string
 	Pattern string
 }
 
@@ -199,7 +202,7 @@ func (a *App) RouteInfo(name string) (RouteInfo, bool) {
 	if !ok {
 		return RouteInfo{}, false
 	}
-	return RouteInfo{Name: entry.name, Method: entry.method, Pattern: entry.pattern}, true
+	return RouteInfo{Name: entry.name, Method: entry.method, Host: entry.host, Pattern: entry.pattern}, true
 }
 
 // Routes returns all named routes.
@@ -241,7 +244,7 @@ func (a *App) handleWithOptions(method, path string, handler Handler, middleware
 		}
 	}
 
-	id, err := a.router.Add(method, path)
+	id, err := a.router.AddWithHost(method, cfg.host, path)
 	if err != nil {
 		a.logger.Error("route registration failed", slog.String("method", method), slog.String("path", path), slog.String("error", err.Error()))
 		return
@@ -252,6 +255,7 @@ func (a *App) handleWithOptions(method, path string, handler Handler, middleware
 
 	a.routes[id] = &routeEntry{
 		method:     method,
+		host:       cfg.host,
 		pattern:    path,
 		handler:    handler,
 		middleware: combined,
@@ -266,9 +270,10 @@ func (a *App) handleWithOptions(method, path string, handler Handler, middleware
 
 // ServeHTTP implements http.Handler.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id, params, ok := a.router.Match(r.Method, r.URL.Path)
+	reqHost := requestHost(r)
+	id, params, ok := a.router.MatchHost(r.Method, reqHost, r.URL.Path)
 	if !ok {
-		allowed := a.router.Allowed(r.URL.Path)
+		allowed := a.router.AllowedHost(reqHost, r.URL.Path)
 		ctx := NewContext(w, r, router.Params{}, a)
 		if len(allowed) > 0 {
 			w.Header().Set("Allow", strings.Join(allowed, ", "))
@@ -427,4 +432,17 @@ func (a *App) newServer() *http.Server {
 		ReadHeaderTimeout: a.config.ReadHeaderTimeout,
 		MaxHeaderBytes:    a.config.MaxHeaderBytes,
 	}
+}
+
+func requestHost(r *http.Request) string {
+	host := r.Host
+	if host == "" {
+		host = r.URL.Host
+	}
+	if strings.Contains(host, ":") {
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			return h
+		}
+	}
+	return host
 }

@@ -24,6 +24,7 @@ type CSRFOptions struct {
 	CookieHTTPOnly  bool
 	CookieSameSite  http.SameSite
 	TokenLength     int
+	Rotate          bool
 }
 
 // CSRF protects against cross-site request forgery using a double-submit cookie.
@@ -52,6 +53,15 @@ func CSRF(options CSRFOptions) bebo.Middleware {
 				if submitted == "" || !secureCompare(submitted, token) {
 					return apperr.Forbidden("csrf token invalid", nil)
 				}
+			}
+
+			if cfg.Rotate {
+				newToken, err := generateToken(cfg.TokenLength)
+				if err != nil {
+					return apperr.Internal("csrf token generation failed", err)
+				}
+				setCSRFCookie(ctx.ResponseWriter, newToken, cfg)
+				ctx.Set(csrfKey, newToken)
 			}
 
 			return next(ctx)

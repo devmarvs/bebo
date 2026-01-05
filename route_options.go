@@ -5,6 +5,7 @@ import "time"
 type routeConfig struct {
 	name       string
 	timeout    time.Duration
+	host       string
 	middleware []Middleware
 }
 
@@ -22,6 +23,13 @@ func WithName(name string) RouteOption {
 func WithTimeout(timeout time.Duration) RouteOption {
 	return func(cfg *routeConfig) {
 		cfg.timeout = timeout
+	}
+}
+
+// WithHost scopes a route to a host or wildcard (e.g. "api.example.com", "*.example.com").
+func WithHost(host string) RouteOption {
+	return func(cfg *routeConfig) {
+		cfg.host = host
 	}
 }
 

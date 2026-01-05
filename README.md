@@ -10,18 +10,21 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Go 1.25 (as requested). If you are on a released Go toolchain, downgrade the `go` directive in `go.mod`.
 
 ## Features
-- Custom router with params (`/users/:id`), wildcards (`/assets/*path`), groups, and method-not-allowed responses
-- Named routes + path helpers
+- Custom router with params (`/users/:id`), wildcards (`/assets/*path`), groups, and host-based routing
+- Method-not-allowed handling
+- Named routes + path/query helpers
 - Middleware chain (request ID, recovery, logging, CORS, body limit, timeout, auth, rate limiting)
-- Security headers and CSRF protection
+- Security headers, IP allow/deny, CSRF protection
 - Cookie-based session helper with signing
+- Compression (gzip) + response ETag + cache control
 - JSON and HTML rendering with layouts, template funcs, and reload in dev mode
 - Static file helper with cache headers + ETag
-- Metrics registry + JSON handler
+- Metrics registry + JSON handler + histogram buckets
+- Tracing hooks middleware
 - Config defaults + env overrides + JSON config loader
 - Validation helpers (including struct tags)
 - Graceful shutdown helpers
-- Minimal CLI generator
+- Minimal CLI generator + migration commands
 - DB helpers + SQL migrations runner
 
 ## Quick Start (API)
@@ -58,10 +61,17 @@ v1.GET("/users/:id", handler)
 app.Version("v1").GET("/health", handler)
 ```
 
+## Host-Based Routing
+```go
+app.Route("GET", "/", handler, bebo.WithHost("example.com"))
+app.Route("GET", "/", handler, bebo.WithHost("*.example.com"))
+```
+
 ## Named Routes
 ```go
 app.Route("GET", "/users/:id", handler, bebo.WithName("user.show"))
 path, _ := app.Path("user.show", map[string]string{"id": "42"})
+path, _ = app.PathWithQuery("user.show", map[string]string{"id": "42"}, map[string]string{"q": "test"})
 ```
 
 ## Static Assets
@@ -76,6 +86,7 @@ app.Use(
     middleware.BodyLimit(2<<20),
     middleware.Timeout(5*time.Second),
     middleware.SecurityHeaders(middleware.DefaultSecurityHeaders()),
+    middleware.Gzip(0),
 )
 
 limiter := middleware.NewLimiter(5, 10)
@@ -91,6 +102,12 @@ app.POST("/submit", func(ctx *bebo.Context) error {
     _ = token
     return ctx.Text(http.StatusOK, "ok")
 })
+```
+
+## IP Allow/Deny
+```go
+filter, _ := middleware.IPFilter(middleware.IPFilterOptions{Allow: []string{"127.0.0.1"}})
+app.Use(filter)
 ```
 
 ## Sessions
@@ -171,11 +188,14 @@ Env keys include: `ADDRESS`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `TEMPLATES_DIR`, `
 ```sh
 bebo new ./myapp -module github.com/me/myapp -template
 bebo route add -method GET -path /users/:id -name user.show
+bebo migrate new -dir ./migrations -name create_users
+bebo migrate plan -dir ./migrations
 ```
 
 ## Migrations
 ```go
 runner := migrate.New(db, "./migrations")
+runner.Locker = migrate.AdvisoryLocker{ID: 42}
 _, _ = runner.Up(context.Background())
 ```
 Files use `0001_name.up.sql` and `0001_name.down.sql`.

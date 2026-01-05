@@ -2,6 +2,7 @@ package router
 
 import (
 	"errors"
+	"net"
 	"strings"
 )
 
@@ -27,6 +28,7 @@ type segment struct {
 type route struct {
 	id       RouteID
 	method   string
+	host     string
 	pattern  string
 	segments []segment
 }
@@ -44,6 +46,11 @@ func New() *Router {
 
 // Add registers a route and returns its id.
 func (r *Router) Add(method, pattern string) (RouteID, error) {
+	return r.AddWithHost(method, "", pattern)
+}
+
+// AddWithHost registers a route scoped to a host (or wildcard) and returns its id.
+func (r *Router) AddWithHost(method, host, pattern string) (RouteID, error) {
 	if method == "" {
 		return 0, errors.New("method required")
 	}
@@ -58,20 +65,29 @@ func (r *Router) Add(method, pattern string) (RouteID, error) {
 
 	id := r.nextID
 	r.nextID++
-	r.routes = append(r.routes, route{method: method, pattern: pattern, segments: segments, id: id})
+	r.routes = append(r.routes, route{method: method, host: normalizeHost(host), pattern: pattern, segments: segments, id: id})
 	return id, nil
 }
 
 // Match finds a matching route.
 func (r *Router) Match(method, path string) (RouteID, Params, bool) {
+	return r.MatchHost(method, "", path)
+}
+
+// MatchHost finds a matching route for a host.
+func (r *Router) MatchHost(method, host, path string) (RouteID, Params, bool) {
 	if path == "" {
 		path = "/"
 	}
 
 	parts := splitPath(path)
+	reqHost := normalizeHost(host)
 
 	for _, rt := range r.routes {
 		if !methodMatches(rt.method, method) {
+			continue
+		}
+		if !hostMatches(rt.host, reqHost) {
 			continue
 		}
 
@@ -86,15 +102,24 @@ func (r *Router) Match(method, path string) (RouteID, Params, bool) {
 
 // Allowed returns allowed methods for a given path.
 func (r *Router) Allowed(path string) []string {
+	return r.AllowedHost("", path)
+}
+
+// AllowedHost returns allowed methods for a given host/path.
+func (r *Router) AllowedHost(host, path string) []string {
 	if path == "" {
 		path = "/"
 	}
 
 	parts := splitPath(path)
+	reqHost := normalizeHost(host)
 	methods := make([]string, 0)
 	seen := make(map[string]struct{})
 
 	for _, rt := range r.routes {
+		if !hostMatches(rt.host, reqHost) {
+			continue
+		}
 		if matchSegments(rt.segments, parts, nil) {
 			if _, ok := seen[rt.method]; ok {
 				continue
@@ -109,6 +134,33 @@ func (r *Router) Allowed(path string) []string {
 
 func methodMatches(routeMethod, requestMethod string) bool {
 	return routeMethod == "*" || routeMethod == requestMethod
+}
+
+func normalizeHost(host string) string {
+	if host == "" {
+		return ""
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if strings.Contains(host, ":") {
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+	}
+	return host
+}
+
+func hostMatches(pattern, host string) bool {
+	if pattern == "" || pattern == "*" {
+		return true
+	}
+	if host == "" {
+		return false
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := strings.TrimPrefix(pattern, "*")
+		return strings.HasSuffix(host, suffix) && host != strings.TrimPrefix(suffix, ".")
+	}
+	return strings.EqualFold(pattern, host)
 }
 
 func parsePattern(pattern string) ([]segment, error) {
