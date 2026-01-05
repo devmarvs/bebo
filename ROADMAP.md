@@ -9,11 +9,16 @@
 - Cookie-based session helper
 - Compression (gzip), response ETag, cache control
 - JSON and HTML rendering with layouts, template funcs, and reload
+- Template partials + HTML error pages
 - Static file helper with cache headers + ETag
 - Config defaults, env overrides, and JSON config loader
 - Validation helpers with struct tags
+- OpenAPI scaffolding (builder + JSON handler)
+- JWT authenticator helper
+- Session store adapters (memory)
 - Metrics registry + JSON handler + latency buckets
 - Tracing hooks middleware
+- Prometheus exporter + optional OpenTelemetry adapter
 - Graceful shutdown helpers
 - DB helpers + SQL migration runner with plan
 - Minimal CLI generator + migration commands
@@ -21,11 +26,10 @@
 
 ## v0.2
 - Static file fingerprint manifest integration
-- Sessions store adapters
+- Session store adapters (redis, postgres)
 - Error reporting hooks and metrics helpers
 - Brotli compression (third-party)
 
 ## v0.3
-- OpenAPI scaffolding
 - CLI generator upgrades
 - Optional integrations (caching, queues)

@@ -48,17 +48,26 @@ type RouteInfo struct {
 	Pattern string
 }
 
+// ErrorPageData is passed to error templates.
+type ErrorPageData struct {
+	Status  int
+	Code    string
+	Message string
+	Fields  []validate.FieldError
+}
+
 // App is the main framework entrypoint.
 type App struct {
-	router       *router.Router
-	routes       map[router.RouteID]*routeEntry
-	routesByName map[string]router.RouteID
-	middleware   []Middleware
-	renderer     *render.Engine
-	logger       *slog.Logger
-	config       config.Config
-	templateOpts render.Options
-	errorHandler ErrorHandler
+	router         *router.Router
+	routes         map[router.RouteID]*routeEntry
+	routesByName   map[string]router.RouteID
+	middleware     []Middleware
+	renderer       *render.Engine
+	logger         *slog.Logger
+	config         config.Config
+	templateOpts   render.Options
+	errorHandler   ErrorHandler
+	errorTemplates map[int]string
 }
 
 // Option customizes the app instance.
@@ -69,14 +78,15 @@ func New(options ...Option) *App {
 	cfg := config.Default()
 
 	app := &App{
-		router:       router.New(),
-		routes:       make(map[router.RouteID]*routeEntry),
-		routesByName: make(map[string]router.RouteID),
-		renderer:     nil,
-		logger:       nil,
-		config:       cfg,
-		templateOpts: render.Options{Layout: cfg.LayoutTemplate, Reload: cfg.TemplateReload},
-		errorHandler: defaultErrorHandler,
+		router:         router.New(),
+		routes:         make(map[router.RouteID]*routeEntry),
+		routesByName:   make(map[string]router.RouteID),
+		renderer:       nil,
+		logger:         nil,
+		config:         cfg,
+		templateOpts:   render.Options{Layout: cfg.LayoutTemplate, Reload: cfg.TemplateReload},
+		errorHandler:   defaultErrorHandler,
+		errorTemplates: nil,
 	}
 
 	for _, opt := range options {
@@ -145,10 +155,32 @@ func WithTemplateReload(enabled bool) Option {
 	}
 }
 
+// WithTemplatePartials configures glob patterns for partial templates.
+func WithTemplatePartials(patterns ...string) Option {
+	return func(app *App) {
+		app.templateOpts.Partials = append([]string{}, patterns...)
+	}
+}
+
+// WithTemplateSubdirs enables nested template directories.
+func WithTemplateSubdirs(enabled bool) Option {
+	return func(app *App) {
+		app.templateOpts.IncludeSubdirs = enabled
+	}
+}
+
 // WithErrorHandler overrides the default error handler.
 func WithErrorHandler(handler ErrorHandler) Option {
 	return func(app *App) {
 		app.errorHandler = handler
+	}
+}
+
+// WithErrorTemplates configures template names for HTML error pages.
+// Use status code keys, or 0 for a default template.
+func WithErrorTemplates(templates map[int]string) Option {
+	return func(app *App) {
+		app.errorTemplates = copyErrorTemplates(templates)
 	}
 }
 
@@ -409,7 +441,41 @@ func defaultErrorHandler(ctx *Context, err error) {
 		return
 	}
 
+	if ctx.app != nil && ctx.app.renderer != nil {
+		if name, ok := errorTemplateName(ctx.app.errorTemplates, status); ok {
+			data := ErrorPageData{Status: status, Code: code, Message: message, Fields: fields}
+			if renderErr := ctx.app.renderer.Render(ctx.ResponseWriter, status, name, data); renderErr == nil {
+				return
+			}
+			ctx.Logger().Error("error template render failed", slog.Int("status", status), slog.String("error", renderErr.Error()))
+		}
+	}
+
 	_ = ctx.Text(status, message)
+}
+
+func errorTemplateName(templates map[int]string, status int) (string, bool) {
+	if len(templates) == 0 {
+		return "", false
+	}
+	if name, ok := templates[status]; ok {
+		return name, true
+	}
+	if name, ok := templates[0]; ok {
+		return name, true
+	}
+	return "", false
+}
+
+func copyErrorTemplates(templates map[int]string) map[int]string {
+	if len(templates) == 0 {
+		return nil
+	}
+	cloned := make(map[int]string, len(templates))
+	for key, value := range templates {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func wantsJSON(r *http.Request) bool {

@@ -16,6 +16,13 @@ var (
 	ErrInvalidCookie = errors.New("invalid session cookie")
 )
 
+// Store defines a session persistence backend.
+type Store interface {
+	Get(*http.Request) (*Session, error)
+	Save(http.ResponseWriter, *Session) error
+	Clear(http.ResponseWriter, *Session)
+}
+
 // CookieStore stores sessions in a signed cookie.
 type CookieStore struct {
 	Name     string
@@ -27,10 +34,17 @@ type CookieStore struct {
 	SameSite http.SameSite
 }
 
-// Session represents cookie-backed session data.
+// Session represents session data.
 type Session struct {
+	ID     string
 	Values map[string]string
-	store  *CookieStore
+	store  Store
+	isNew  bool
+}
+
+// IsNew reports whether the session was newly created for this request.
+func (s *Session) IsNew() bool {
+	return s.isNew
 }
 
 // NewCookieStore creates a cookie store with key rotation support.
@@ -52,15 +66,63 @@ func (s *CookieStore) Get(r *http.Request) (*Session, error) {
 	values := map[string]string{}
 	cookie, err := r.Cookie(s.Name)
 	if err != nil {
-		return &Session{Values: values, store: s}, nil
+		return &Session{Values: values, store: s, isNew: true}, nil
 	}
 
 	decoded, err := decode(cookie.Value, s.Keys)
 	if err != nil {
-		return &Session{Values: values, store: s}, ErrInvalidCookie
+		return &Session{Values: values, store: s, isNew: true}, ErrInvalidCookie
 	}
 
 	return &Session{Values: decoded, store: s}, nil
+}
+
+// Save writes the session cookie.
+func (s *CookieStore) Save(w http.ResponseWriter, session *Session) error {
+	if session == nil {
+		return errors.New("session missing")
+	}
+	value, err := encode(session.Values, s.Keys)
+	if err != nil {
+		return err
+	}
+
+	cookie := &http.Cookie{
+		Name:     s.Name,
+		Value:    value,
+		Path:     s.Path,
+		Secure:   s.Secure,
+		HttpOnly: s.HTTPOnly,
+		SameSite: s.SameSite,
+	}
+
+	if s.MaxAge > 0 {
+		cookie.MaxAge = int(s.MaxAge.Seconds())
+		cookie.Expires = time.Now().Add(s.MaxAge)
+	}
+
+	http.SetCookie(w, cookie)
+	session.isNew = false
+	return nil
+}
+
+// Clear expires the session cookie.
+func (s *CookieStore) Clear(w http.ResponseWriter, session *Session) {
+	cookie := &http.Cookie{
+		Name:     s.Name,
+		Value:    "",
+		Path:     s.Path,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   s.Secure,
+		HttpOnly: s.HTTPOnly,
+		SameSite: s.SameSite,
+	}
+	http.SetCookie(w, cookie)
+	if session != nil {
+		session.Values = map[string]string{}
+		session.isNew = true
+	}
 }
 
 // Set sets a key value.
@@ -78,48 +140,20 @@ func (s *Session) Delete(key string) {
 	delete(s.Values, key)
 }
 
-// Save writes the session cookie.
+// Save writes the session to the configured store.
 func (s *Session) Save(w http.ResponseWriter) error {
 	if s.store == nil {
 		return errors.New("session store missing")
 	}
-
-	value, err := encode(s.Values, s.store.Keys)
-	if err != nil {
-		return err
-	}
-
-	cookie := &http.Cookie{
-		Name:     s.store.Name,
-		Value:    value,
-		Path:     s.store.Path,
-		Secure:   s.store.Secure,
-		HttpOnly: s.store.HTTPOnly,
-		SameSite: s.store.SameSite,
-	}
-
-	if s.store.MaxAge > 0 {
-		cookie.MaxAge = int(s.store.MaxAge.Seconds())
-		cookie.Expires = time.Now().Add(s.store.MaxAge)
-	}
-
-	http.SetCookie(w, cookie)
-	return nil
+	return s.store.Save(w, s)
 }
 
-// Clear expires the session cookie.
+// Clear clears the session from the configured store.
 func (s *Session) Clear(w http.ResponseWriter) {
-	cookie := &http.Cookie{
-		Name:     s.store.Name,
-		Value:    "",
-		Path:     s.store.Path,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		Secure:   s.store.Secure,
-		HttpOnly: s.store.HTTPOnly,
-		SameSite: s.store.SameSite,
+	if s.store == nil {
+		return
 	}
-	http.SetCookie(w, cookie)
+	s.store.Clear(w, s)
 }
 
 func encode(values map[string]string, keys [][]byte) (string, error) {

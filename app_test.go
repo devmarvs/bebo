@@ -3,7 +3,12 @@ package bebo
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/devmarvs/bebo/render"
 )
 
 func TestMethodNotAllowed(t *testing.T) {
@@ -50,5 +55,40 @@ func TestPath(t *testing.T) {
 
 	if _, ok := app.Path("user.show", map[string]string{}); ok {
 		t.Fatalf("expected missing param to fail")
+	}
+}
+
+func TestErrorPageHTML(t *testing.T) {
+	dir := t.TempDir()
+	layout := filepath.Join(dir, "layout.html")
+	page := filepath.Join(dir, "error.html")
+
+	if err := os.WriteFile(layout, []byte("{{ template \"content\" . }}"), 0o644); err != nil {
+		t.Fatalf("write layout: %v", err)
+	}
+	if err := os.WriteFile(page, []byte("{{ define \"content\" }}{{ .Message }}{{ end }}"), 0o644); err != nil {
+		t.Fatalf("write error page: %v", err)
+	}
+
+	engine, err := render.NewEngineWithOptions(dir, render.Options{Layout: "layout.html"})
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
+
+	app := New(
+		WithRenderer(engine),
+		WithErrorTemplates(map[int]string{http.StatusNotFound: "error.html"}),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "not found") {
+		t.Fatalf("expected error page body")
 	}
 }
