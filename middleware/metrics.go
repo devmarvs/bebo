@@ -10,13 +10,35 @@ import (
 
 // Metrics records request metrics into the registry.
 func Metrics(registry *metrics.Registry) bebo.Middleware {
+	return MetricsWithOptions(MetricsOptions{Registry: registry})
+}
+
+// MetricsOptions configures metrics recording.
+type MetricsOptions struct {
+	Registry  *metrics.Registry
+	SkipPaths []string
+}
+
+// DefaultMetricsOptions returns default metrics options.
+func DefaultMetricsOptions(registry *metrics.Registry) MetricsOptions {
+	return MetricsOptions{
+		Registry:  registry,
+		SkipPaths: []string{"/metrics", "/health"},
+	}
+}
+
+// MetricsWithOptions records request metrics with options.
+func MetricsWithOptions(options MetricsOptions) bebo.Middleware {
 	return func(next bebo.Handler) bebo.Handler {
 		return func(ctx *bebo.Context) error {
-			if registry == nil {
+			if options.Registry == nil {
+				return next(ctx)
+			}
+			if shouldSkipPath(ctx.Request.URL.Path, options.SkipPaths) {
 				return next(ctx)
 			}
 
-			start := registry.Start()
+			start := options.Registry.Start()
 			recorder := newResponseRecorder(ctx.ResponseWriter)
 			ctx.ResponseWriter = recorder
 
@@ -31,7 +53,7 @@ func Metrics(registry *metrics.Registry) bebo.Middleware {
 				}
 			}
 
-			registry.End(start, status, err)
+			options.Registry.End(start, status, err)
 			return err
 		}
 	}

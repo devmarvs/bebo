@@ -23,6 +23,8 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Metrics registry + JSON handler + histogram buckets + Prometheus exporter
 - Tracing hooks middleware + optional OpenTelemetry adapter
 - OpenAPI scaffolding (builder + JSON handler)
+- HTTP client utilities (timeouts, retries, backoff, circuit breaker)
+- Form/multipart binding + file upload helpers
 - Config defaults + env overrides + JSON config loader
 - Validation helpers (including struct tags)
 - Graceful shutdown helpers
@@ -111,6 +113,21 @@ limiter := middleware.NewLimiter(5, 10)
 app.GET("/reports", reportsHandler, middleware.RateLimit(limiter))
 ```
 
+## Middleware Options
+```go
+logOpts := middleware.DefaultLoggerOptions()
+logOpts.SkipPaths = []string{"/health"}
+app.Use(middleware.LoggerWithOptions(logOpts))
+
+metricsOpts := middleware.DefaultMetricsOptions(registry)
+metricsOpts.SkipPaths = []string{"/metrics"}
+app.Use(middleware.MetricsWithOptions(metricsOpts))
+
+traceOpts := middleware.DefaultTraceOptions(tracer)
+traceOpts.SkipPaths = []string{"/metrics"}
+app.Use(middleware.TraceWithOptions(traceOpts))
+```
+
 ## CSRF
 ```go
 app.Use(middleware.CSRF(middleware.CSRFOptions{}))
@@ -153,6 +170,20 @@ app.GET("/metrics", func(ctx *bebo.Context) error {
 ```
 Use `metrics.Handler(registry)` for JSON snapshots.
 
+## HTTP Client
+```go
+breaker := httpclient.NewCircuitBreaker(httpclient.CircuitBreakerOptions{
+    MaxFailures:  5,
+    ResetTimeout: 30 * time.Second,
+})
+
+client := httpclient.NewClient(httpclient.ClientOptions{
+    Timeout: 10 * time.Second,
+    Retry:   httpclient.DefaultRetryOptions(),
+    Breaker: breaker,
+})
+```
+
 
 ## OpenTelemetry (optional)
 OpenTelemetry support lives behind the `otel` build tag. Add the OpenTelemetry SDK to your project and build with `-tags otel`.
@@ -186,6 +217,22 @@ authenticator := auth.JWTAuthenticator{
 }
 
 app.GET("/private", privateHandler, middleware.RequireAuth(authenticator))
+```
+
+## Request Binding
+```go
+type Signup struct {
+    Email string `form:"email"`
+    Age   int    `form:"age"`
+}
+
+var form Signup
+if err := ctx.BindForm(&form); err != nil {
+    return err
+}
+
+file, _ := ctx.FormFile("avatar", bebo.DefaultMultipartMemory)
+_ = ctx.SaveUploadedFile(file, "/tmp/"+file.Filename)
 ```
 
 ## Web Templating
@@ -276,6 +323,7 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `auth/`: JWT authenticator helper
 - `openapi/`: OpenAPI builder + handler
 - `otel/`: OpenTelemetry adapter (build tag)
+- `httpclient/`: HTTP client utilities (retry/backoff/breaker)
 - `db/`: database helpers
 - `migrate/`: SQL migration runner
 - `desktop/`: Fyne helpers

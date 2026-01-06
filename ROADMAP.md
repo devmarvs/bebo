@@ -14,6 +14,9 @@
 - Config defaults, env overrides, and JSON config loader
 - Validation helpers with struct tags
 - OpenAPI scaffolding (builder + JSON handler)
+- HTTP client utilities (retry, backoff, circuit breaker)
+- Form/multipart binding + file upload helpers
+- Configurable logging/metrics/tracing middleware options
 - JWT authenticator helper
 - Session store adapters (memory)
 - Metrics registry + JSON handler + latency buckets

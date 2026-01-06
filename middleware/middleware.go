@@ -47,17 +47,40 @@ func Recover() bebo.Middleware {
 
 // Logger logs request/response details.
 func Logger() bebo.Middleware {
-	return LoggerWith(DefaultLogFields()...)
+	return LoggerWithOptions(DefaultLoggerOptions())
 }
 
 // LoggerWith logs request/response details using custom fields.
 func LoggerWith(fields ...LogField) bebo.Middleware {
-	if len(fields) == 0 {
-		fields = DefaultLogFields()
+	return LoggerWithOptions(LoggerOptions{Fields: fields})
+}
+
+// LoggerOptions configures access logging.
+type LoggerOptions struct {
+	Fields     []LogField
+	Message    string
+	SkipPaths  []string
+	ErrorLevel bool
+}
+
+// DefaultLoggerOptions returns default logging options.
+func DefaultLoggerOptions() LoggerOptions {
+	return LoggerOptions{
+		Fields:  DefaultLogFields(),
+		Message: "request completed",
 	}
+}
+
+// LoggerWithOptions logs requests using the provided options.
+func LoggerWithOptions(options LoggerOptions) bebo.Middleware {
+	options = normalizeLoggerOptions(options)
 
 	return func(next bebo.Handler) bebo.Handler {
 		return func(ctx *bebo.Context) error {
+			if shouldSkipPath(ctx.Request.URL.Path, options.SkipPaths) {
+				return next(ctx)
+			}
+
 			start := time.Now()
 			recorder := newResponseRecorder(ctx.ResponseWriter)
 			ctx.ResponseWriter = recorder
@@ -77,15 +100,30 @@ func LoggerWith(fields ...LogField) bebo.Middleware {
 			}
 
 			duration := time.Since(start)
-			attrs := make([]slog.Attr, 0, len(fields))
-			for _, field := range fields {
+			attrs := make([]slog.Attr, 0, len(options.Fields))
+			for _, field := range options.Fields {
 				attrs = append(attrs, field(ctx, recorder, duration))
 			}
 
-			ctx.Logger().Info("request completed", attrs...)
+			if options.ErrorLevel && (err != nil || status >= http.StatusInternalServerError) {
+				ctx.Logger().Error(options.Message, attrs...)
+				return err
+			}
+
+			ctx.Logger().Info(options.Message, attrs...)
 			return err
 		}
 	}
+}
+
+func normalizeLoggerOptions(options LoggerOptions) LoggerOptions {
+	if len(options.Fields) == 0 {
+		options.Fields = DefaultLogFields()
+	}
+	if options.Message == "" {
+		options.Message = "request completed"
+	}
+	return options
 }
 
 // responseRecorder captures status and response size.
