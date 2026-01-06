@@ -26,7 +26,7 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - HTTP client utilities (timeouts, retries, backoff, circuit breaker)
 - Form/multipart binding + file upload helpers
 - Config defaults + env overrides + JSON config loader
-- Validation helpers (including struct tags)
+- Validation helpers (including struct tags, non-string fields, and custom validators)
 - Graceful shutdown helpers
 - Minimal CLI generator + migration commands
 - DB helpers + SQL migrations runner
@@ -81,12 +81,7 @@ path, _ = app.PathWithQuery("user.show", map[string]string{"id": "42"}, map[stri
 ## OpenAPI
 ```go
 spec := openapi.New(openapi.Info{Title: "bebo app", Version: "v0.1"})
-_ = spec.AddRoute("GET", "/health", openapi.Operation{
-    Summary: "Health check",
-    Responses: map[string]openapi.Response{
-        "200": {Description: "ok"},
-    },
-})
+_ = app.AddOpenAPIRoutes(spec, bebo.WithOpenAPIIncludeUnnamed(false))
 
 app.GET("/openapi.json", func(ctx *bebo.Context) error {
     openapi.Handler(spec.Document()).ServeHTTP(ctx.ResponseWriter, ctx.Request)
@@ -264,7 +259,7 @@ app := bebo.New(
 ```
 
 ## HTML Error Pages
-If your error templates live in nested directories, enable `bebo.WithTemplateSubdirs(true)`.
+If your error templates live in nested directories, enable `bebo.WithTemplateSubdirs(true)`. Error templates receive `ErrorPageData` with a nested `Error` envelope and `RequestID`.
 ```go
 app := bebo.New(
     bebo.WithRenderer(engine),

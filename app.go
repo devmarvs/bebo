@@ -3,6 +3,8 @@ package bebo
 import (
 	"context"
 	"errors"
+	"fmt"
+	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -48,12 +50,22 @@ type RouteInfo struct {
 	Pattern string
 }
 
+// ErrorEnvelope describes a standardized error payload.
+type ErrorEnvelope struct {
+	Code      string
+	Message   string
+	Fields    []validate.FieldError
+	RequestID string
+}
+
 // ErrorPageData is passed to error templates.
 type ErrorPageData struct {
-	Status  int
-	Code    string
-	Message string
-	Fields  []validate.FieldError
+	Status    int
+	Code      string
+	Message   string
+	Fields    []validate.FieldError
+	RequestID string
+	Error     ErrorEnvelope
 }
 
 // App is the main framework entrypoint.
@@ -441,9 +453,24 @@ func defaultErrorHandler(ctx *Context, err error) {
 		return
 	}
 
+	requestID := ctx.RequestID()
+	envelope := ErrorEnvelope{
+		Code:      code,
+		Message:   message,
+		Fields:    fields,
+		RequestID: requestID,
+	}
+	data := ErrorPageData{
+		Status:    status,
+		Code:      code,
+		Message:   message,
+		Fields:    fields,
+		RequestID: requestID,
+		Error:     envelope,
+	}
+
 	if ctx.app != nil && ctx.app.renderer != nil {
 		if name, ok := errorTemplateName(ctx.app.errorTemplates, status); ok {
-			data := ErrorPageData{Status: status, Code: code, Message: message, Fields: fields}
 			if renderErr := ctx.app.renderer.Render(ctx.ResponseWriter, status, name, data); renderErr == nil {
 				return
 			}
@@ -451,7 +478,7 @@ func defaultErrorHandler(ctx *Context, err error) {
 		}
 	}
 
-	_ = ctx.Text(status, message)
+	renderDefaultErrorHTML(ctx.ResponseWriter, data)
 }
 
 func errorTemplateName(templates map[int]string, status int) (string, bool) {
@@ -476,6 +503,32 @@ func copyErrorTemplates(templates map[int]string) map[int]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func renderDefaultErrorHTML(w http.ResponseWriter, data ErrorPageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(data.Status)
+
+	message := html.EscapeString(data.Error.Message)
+	code := html.EscapeString(data.Error.Code)
+	requestID := html.EscapeString(data.Error.RequestID)
+
+	fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>%s</title><style>body{font-family:system-ui, -apple-system, sans-serif; padding:2rem; background:#f6f7fb; color:#1b1f2a;}main{max-width:640px;background:#fff;border-radius:12px;padding:2rem;box-shadow:0 8px 24px rgba(27,31,42,0.08);}h1{margin:0 0 0.5rem 0;font-size:1.6rem;}p{margin:0.4rem 0;}ul{margin-top:0.8rem;padding-left:1.2rem;}</style></head><body><main><h1>%s</h1><p>%s</p>`, code, code, message)
+	if requestID != "" {
+		fmt.Fprintf(w, "<p><strong>Request ID:</strong> %s</p>", requestID)
+	}
+	if len(data.Error.Fields) > 0 {
+		fmt.Fprint(w, "<ul>")
+		for _, field := range data.Error.Fields {
+			item := field.Message
+			if field.Field != "" {
+				item = field.Field + ": " + field.Message
+			}
+			fmt.Fprintf(w, "<li>%s</li>", html.EscapeString(item))
+		}
+		fmt.Fprint(w, "</ul>")
+	}
+	fmt.Fprint(w, "</main></body></html>")
 }
 
 func wantsJSON(r *http.Request) bool {
