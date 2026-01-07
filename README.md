@@ -276,6 +276,11 @@ The desktop package is optional but included:
 ```
 examples/desktop
 ```
+Helpers cover window icons, menus, and tray menus via `desktop.WindowConfig`.
+To package a desktop app with an icon:
+```sh
+fyne package -os darwin -icon path/to/icon.png
+```
 Fyne is declared in `go.mod` for the desktop helpers.
 
 ## Configuration
@@ -293,6 +298,7 @@ Env keys include: `ADDRESS`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `TEMPLATES_DIR`, `
 ```sh
 bebo new ./myapp -module github.com/me/myapp -template
 bebo route add -method GET -path /users/:id -name user.show
+bebo crud new users -dir handlers -package handlers -templates templates
 bebo migrate new -dir ./migrations -name create_users
 bebo migrate plan -dir ./migrations
 ```

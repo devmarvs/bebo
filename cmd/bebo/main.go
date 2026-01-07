@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/devmarvs/bebo/migrate"
 )
@@ -25,6 +27,8 @@ func main() {
 		newCmd(os.Args[2:])
 	case "route":
 		routeCmd(os.Args[2:])
+	case "crud":
+		crudCmd(os.Args[2:])
 	case "migrate":
 		migrateCmd(os.Args[2:])
 	default:
@@ -37,6 +41,7 @@ func usage() {
 	fmt.Println("\nCommands:")
 	fmt.Println("  bebo new <dir> -module <module> [-version v0.0.0] [-template]")
 	fmt.Println("  bebo route add -method GET -path /users/:id [-name user.show]")
+	fmt.Println("  bebo crud new <resource> [-dir handlers] [-package handlers] [-templates templates] [-tests=true]")
 	fmt.Println("  bebo migrate new -dir ./migrations -name create_users")
 	fmt.Println("  bebo migrate plan -dir ./migrations [-driver postgres -dsn <dsn>]")
 	fmt.Println("  bebo migrate up -dir ./migrations -driver postgres -dsn <dsn> [-lock-id 0]")
@@ -104,6 +109,95 @@ func routeCmd(args []string) {
 	}
 
 	fmt.Println(line)
+}
+
+func crudCmd(args []string) {
+	if len(args) == 0 || args[0] != "new" {
+		fmt.Println("usage: bebo crud new <resource> [-dir handlers] [-package handlers] [-templates templates] [-tests=true]")
+		return
+	}
+
+	crudNewCmd(args[1:])
+}
+
+func crudNewCmd(args []string) {
+	fs := flag.NewFlagSet("crud new", flag.ExitOnError)
+	dir := fs.String("dir", "handlers", "Output directory")
+	pkg := fs.String("package", "", "Go package name (default: base of dir)")
+	templatesDir := fs.String("templates", "templates", "Templates root directory (empty to skip)")
+	tests := fs.Bool("tests", true, "Generate tests")
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Println("usage: bebo crud new <resource> [-dir handlers] [-package handlers] [-templates templates] [-tests=true]")
+		return
+	}
+
+	resource := sanitizeResourceName(fs.Arg(0))
+	if resource == "" {
+		fmt.Println("resource name is required")
+		return
+	}
+
+	singular, plural := resourceNames(resource)
+	if singular == "" || plural == "" {
+		fmt.Println("invalid resource name")
+		return
+	}
+
+	if *pkg == "" {
+		*pkg = packageNameFromDir(*dir)
+	}
+
+	if err := os.MkdirAll(*dir, 0o755); err != nil {
+		fatal(err)
+	}
+
+	handlerPath := filepath.Join(*dir, plural+".go")
+	if err := writeFileIfNotExists(handlerPath, crudHandlerTemplate(*pkg, singular, plural)); err != nil {
+		fatal(err)
+	}
+
+	if *tests {
+		testPath := filepath.Join(*dir, plural+"_test.go")
+		if err := writeFileIfNotExists(testPath, crudTestTemplate(*pkg, singular, plural)); err != nil {
+			fatal(err)
+		}
+	}
+
+	templatesRoot := strings.TrimSpace(*templatesDir)
+	if templatesRoot != "" {
+		resourceDir := filepath.Join(templatesRoot, plural)
+		if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+			fatal(err)
+		}
+		if err := writeFileIfNotExists(filepath.Join(resourceDir, "index.html"), crudIndexTemplate(singular, plural)); err != nil {
+			fatal(err)
+		}
+		if err := writeFileIfNotExists(filepath.Join(resourceDir, "show.html"), crudShowTemplate(singular, plural)); err != nil {
+			fatal(err)
+		}
+		if err := writeFileIfNotExists(filepath.Join(resourceDir, "new.html"), crudNewTemplate(singular, plural)); err != nil {
+			fatal(err)
+		}
+		if err := writeFileIfNotExists(filepath.Join(resourceDir, "edit.html"), crudEditTemplate(singular, plural)); err != nil {
+			fatal(err)
+		}
+	}
+
+	fmt.Println("crud scaffold created:")
+	fmt.Println("  " + handlerPath)
+	if *tests {
+		fmt.Println("  " + filepath.Join(*dir, plural+"_test.go"))
+	}
+	if strings.TrimSpace(*templatesDir) != "" {
+		fmt.Println("  " + filepath.Join(*templatesDir, plural, "index.html"))
+		fmt.Println("  " + filepath.Join(*templatesDir, plural, "show.html"))
+		fmt.Println("  " + filepath.Join(*templatesDir, plural, "new.html"))
+		fmt.Println("  " + filepath.Join(*templatesDir, plural, "edit.html"))
+	}
+	fmt.Println("register routes:")
+	fmt.Printf("  %s.Register%sRoutes(app)\n", *pkg, pascalCase(singular))
 }
 
 func migrateCmd(args []string) {
@@ -315,6 +409,15 @@ func writeFile(path, contents string) error {
 	return os.WriteFile(path, []byte(contents), 0o644)
 }
 
+func writeFileIfNotExists(path, contents string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("file already exists: %s", path)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeFile(path, contents)
+}
+
 func sanitizeName(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	re := regexp.MustCompile(`[^a-z0-9_]+`)
@@ -325,6 +428,379 @@ func sanitizeName(name string) string {
 		name = "migration"
 	}
 	return name
+}
+
+func sanitizeResourceName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	re := regexp.MustCompile(`[^a-z0-9_]+`)
+	name = strings.ReplaceAll(name, " ", "_")
+	name = re.ReplaceAllString(name, "_")
+	return strings.Trim(name, "_")
+}
+
+func packageNameFromDir(dir string) string {
+	base := filepath.Base(filepath.Clean(dir))
+	name := sanitizeResourceName(base)
+	if name == "" {
+		return "handlers"
+	}
+	return name
+}
+
+func resourceNames(name string) (string, string) {
+	if looksPlural(name) {
+		return singularize(name), name
+	}
+	return name, pluralize(name)
+}
+
+func looksPlural(name string) bool {
+	name = strings.ToLower(name)
+	if strings.HasSuffix(name, "ss") || strings.HasSuffix(name, "us") {
+		return false
+	}
+	return strings.HasSuffix(name, "s")
+}
+
+func pluralize(name string) string {
+	if name == "" {
+		return ""
+	}
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, "s") || strings.HasSuffix(lower, "x") || strings.HasSuffix(lower, "z") ||
+		strings.HasSuffix(lower, "ch") || strings.HasSuffix(lower, "sh") {
+		return name + "es"
+	}
+	if strings.HasSuffix(lower, "y") && len(lower) > 1 && !isVowel(lower[len(lower)-2]) {
+		return name[:len(name)-1] + "ies"
+	}
+	return name + "s"
+}
+
+func singularize(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, "ies") && len(name) > 3:
+		return name[:len(name)-3] + "y"
+	case strings.HasSuffix(lower, "ches") || strings.HasSuffix(lower, "shes") ||
+		strings.HasSuffix(lower, "ses") || strings.HasSuffix(lower, "xes") ||
+		strings.HasSuffix(lower, "zes"):
+		return name[:len(name)-2]
+	case strings.HasSuffix(lower, "s") && len(name) > 1:
+		return name[:len(name)-1]
+	default:
+		return name
+	}
+}
+
+func isVowel(b byte) bool {
+	switch b {
+	case 'a', 'e', 'i', 'o', 'u':
+		return true
+	default:
+		return false
+	}
+}
+
+func titleCase(name string) string {
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '_' || r == '-' || r == ' '
+	})
+	if len(parts) == 0 {
+		return name
+	}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		out = append(out, string(runes))
+	}
+	return strings.Join(out, " ")
+}
+
+func pascalCase(name string) string {
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '_' || r == '-' || r == ' '
+	})
+	if len(parts) == 0 {
+		return name
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		b.WriteString(string(runes))
+	}
+	return b.String()
+}
+
+func crudHandlerTemplate(pkg, singular, plural string) string {
+	typeName := pascalCase(singular)
+	pageType := pascalCase(singular) + "PageData"
+	registerName := pascalCase(singular)
+
+	listFn := "list" + pascalCase(plural)
+	showFn := "show" + pascalCase(singular)
+	newFn := "new" + pascalCase(singular)
+	editFn := "edit" + pascalCase(singular)
+	createFn := "create" + pascalCase(singular)
+	updateFn := "update" + pascalCase(singular)
+	deleteFn := "delete" + pascalCase(singular)
+
+	titlePlural := titleCase(plural)
+	titleSingular := titleCase(singular)
+	titleNew := "New " + titleSingular
+	titleEdit := "Edit " + titleSingular
+
+	return fmt.Sprintf(`package %s
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/devmarvs/bebo"
+)
+
+type %s struct {
+	ID string `+"`json:\"id\"`"+`
+}
+
+type %s struct {
+	Title string
+	Item  %s
+	Items []%s
+}
+
+func Register%sRoutes(app *bebo.App) {
+	app.GET("/%s", %s)
+	app.GET("/%s/new", %s)
+	app.GET("/%s/:id", %s)
+	app.GET("/%s/:id/edit", %s)
+	app.POST("/%s", %s)
+	app.PUT("/%s/:id", %s)
+	app.DELETE("/%s/:id", %s)
+}
+
+func %s(ctx *bebo.Context) error {
+	items := []%s{{ID: "1"}, {ID: "2"}}
+	data := %s{
+		Title: "%s",
+		Items: items,
+	}
+	if acceptsHTML(ctx.Request) {
+		if err := ctx.HTML(http.StatusOK, "%s/index.html", data); err == nil {
+			return nil
+		}
+	}
+	return ctx.JSON(http.StatusOK, items)
+}
+
+func %s(ctx *bebo.Context) error {
+	id := ctx.Param("id")
+	item := %s{ID: id}
+	data := %s{
+		Title: "%s",
+		Item:  item,
+	}
+	if acceptsHTML(ctx.Request) {
+		if err := ctx.HTML(http.StatusOK, "%s/show.html", data); err == nil {
+			return nil
+		}
+	}
+	return ctx.JSON(http.StatusOK, item)
+}
+
+func %s(ctx *bebo.Context) error {
+	data := %s{
+		Title: "%s",
+	}
+	if acceptsHTML(ctx.Request) {
+		if err := ctx.HTML(http.StatusOK, "%s/new.html", data); err == nil {
+			return nil
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "new"})
+}
+
+func %s(ctx *bebo.Context) error {
+	id := ctx.Param("id")
+	item := %s{ID: id}
+	data := %s{
+		Title: "%s",
+		Item:  item,
+	}
+	if acceptsHTML(ctx.Request) {
+		if err := ctx.HTML(http.StatusOK, "%s/edit.html", data); err == nil {
+			return nil
+		}
+	}
+	return ctx.JSON(http.StatusOK, item)
+}
+
+func %s(ctx *bebo.Context) error {
+	return ctx.JSON(http.StatusCreated, map[string]string{"status": "created"})
+}
+
+func %s(ctx *bebo.Context) error {
+	id := ctx.Param("id")
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "updated", "id": id})
+}
+
+func %s(ctx *bebo.Context) error {
+	ctx.ResponseWriter.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func acceptsHTML(r *http.Request) bool {
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	return strings.Contains(accept, "text/html")
+}
+`, pkg,
+		typeName,
+		pageType, typeName, typeName,
+		registerName,
+		plural, listFn,
+		plural, newFn,
+		plural, showFn,
+		plural, editFn,
+		plural, createFn,
+		plural, updateFn,
+		plural, deleteFn,
+		listFn, typeName, pageType, titlePlural, plural,
+		showFn, typeName, pageType, titleSingular, plural,
+		newFn, pageType, titleNew, plural,
+		editFn, typeName, pageType, titleEdit, plural,
+		createFn,
+		updateFn,
+		deleteFn,
+	)
+}
+
+func crudTestTemplate(pkg, singular, plural string) string {
+	registerName := pascalCase(singular)
+
+	return fmt.Sprintf(`package %s
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/devmarvs/bebo"
+)
+
+func Test%sRoutes(t *testing.T) {
+	app := bebo.New()
+	Register%sRoutes(app)
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		status int
+	}{
+		{"list", http.MethodGet, "/%s", http.StatusOK},
+		{"new", http.MethodGet, "/%s/new", http.StatusOK},
+		{"show", http.MethodGet, "/%s/1", http.StatusOK},
+		{"edit", http.MethodGet, "/%s/1/edit", http.StatusOK},
+		{"create", http.MethodPost, "/%s", http.StatusCreated},
+		{"update", http.MethodPut, "/%s/1", http.StatusOK},
+		{"delete", http.MethodDelete, "/%s/1", http.StatusNoContent},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(tc.method, server.URL+tc.path, nil)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			req.Header.Set("Accept", "application/json")
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("do: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tc.status {
+				t.Fatalf("expected status %d, got %d", tc.status, resp.StatusCode)
+			}
+		})
+	}
+}
+`, pkg, registerName, registerName, plural, plural, plural, plural, plural, plural, plural)
+}
+
+func crudIndexTemplate(singular, plural string) string {
+	singularTitle := titleCase(singular)
+	pluralTitle := titleCase(plural)
+
+	return fmt.Sprintf(`{{ define "content" }}
+<h1>{{ .Title }}</h1>
+<ul>
+  {{ range .Items }}
+  <li><a href="/%s/{{ .ID }}">{{ .ID }}</a></li>
+  {{ else }}
+  <li>No %s yet.</li>
+  {{ end }}
+</ul>
+<a href="/%s/new">New %s</a>
+{{ end }}
+`, plural, pluralTitle, plural, singularTitle)
+}
+
+func crudShowTemplate(singular, plural string) string {
+	singularTitle := titleCase(singular)
+	pluralTitle := titleCase(plural)
+
+	return fmt.Sprintf(`{{ define "content" }}
+<h1>{{ .Title }}</h1>
+<p>ID: {{ .Item.ID }}</p>
+<p><a href="/%s/{{ .Item.ID }}/edit">Edit %s</a></p>
+<p><a href="/%s">Back to %s</a></p>
+{{ end }}
+`, plural, singularTitle, plural, pluralTitle)
+}
+
+func crudNewTemplate(singular, plural string) string {
+	singularTitle := titleCase(singular)
+
+	return fmt.Sprintf(`{{ define "content" }}
+<h1>{{ .Title }}</h1>
+<form method="post" action="/%s">
+  <label>%s name <input name="name"></label>
+  <button type="submit">Create</button>
+</form>
+{{ end }}
+`, plural, singularTitle)
+}
+
+func crudEditTemplate(singular, plural string) string {
+	singularTitle := titleCase(singular)
+
+	return fmt.Sprintf(`{{ define "content" }}
+<h1>{{ .Title }}</h1>
+<form method="post" action="/%s/{{ .Item.ID }}">
+  <input type="hidden" name="_method" value="PUT">
+  <label>%s name <input name="name" value="{{ .Item.ID }}"></label>
+  <button type="submit">Update</button>
+</form>
+<form method="post" action="/%s/{{ .Item.ID }}" style="margin-top:1rem;">
+  <input type="hidden" name="_method" value="DELETE">
+  <button type="submit">Delete</button>
+</form>
+<p><small>Note: add method override middleware or use JavaScript to send PUT/DELETE requests.</small></p>
+{{ end }}
+`, plural, singularTitle, plural)
 }
 
 func fatal(err error) {
