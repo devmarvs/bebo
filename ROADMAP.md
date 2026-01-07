@@ -12,16 +12,18 @@
 - Template partials + HTML error pages
 - Static file helper with cache headers + ETag
 - Config defaults, env overrides, and JSON config loader
+- Health/ready checks registry
 - Validation helpers with struct tags
 - OpenAPI builder + JSON handler
 - HTTP client utilities (retry, backoff, circuit breaker)
 - Form/multipart binding + file upload helpers
 - Configurable logging/metrics/tracing middleware options
 - JWT authenticator helper
-- Session store adapters (memory)
+- Session store adapters (memory, redis, postgres)
 - Metrics registry + JSON handler + latency buckets
 - Tracing hooks middleware
 - Prometheus exporter + optional OpenTelemetry adapter
+- Realtime helpers (SSE/WebSocket)
 - Graceful shutdown helpers
 - DB helpers + SQL migration runner with plan
 - Minimal CLI generator + migration commands
@@ -29,7 +31,6 @@
 
 ## v0.2
 - Static file fingerprint manifest integration
-- Session store adapters (redis, postgres)
 - Error reporting hooks and metrics helpers
 - Brotli compression (third-party)
 

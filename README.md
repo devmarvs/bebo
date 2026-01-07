@@ -15,15 +15,17 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Named routes + path/query helpers
 - Middleware chain (request ID, recovery, logging, CORS, body limit, timeout, auth, rate limiting)
 - Security headers, IP allow/deny, CSRF protection
-- Cookie-based sessions + in-memory store adapter
+- Cookie-based sessions + memory/redis/postgres stores
 - Flash messages (session-backed) + CSRF template helpers
 - Method override for HTML forms (PUT/PATCH/DELETE)
 - Compression (gzip) + response ETag + cache control
 - JSON and HTML rendering with layouts, template funcs, partials, reload, and embedded templates
 - HTML error pages with configurable templates
+- Health/ready checks registry
 - Static file helper with cache headers + ETag (disk or fs.FS)
 - Metrics registry + JSON handler + histogram buckets + Prometheus exporter
 - Tracing hooks middleware + optional OpenTelemetry adapter
+- Realtime (SSE/WebSocket) helpers
 - OpenAPI builder + JSON handler
 - HTTP client utilities (timeouts, retries, backoff, circuit breaker)
 - Form/multipart binding + file upload helpers
@@ -163,6 +165,23 @@ app.GET("/profile", func(ctx *bebo.Context) error {
 })
 ```
 
+## Persistent Sessions (Redis/Postgres)
+```go
+redisStore := session.NewRedisStore(session.RedisOptions{
+    Address: "127.0.0.1:6379",
+    TTL:     30 * time.Minute,
+})
+
+pgStore, _ := session.NewPostgresStore(session.PostgresOptions{
+    DB:   db,
+    TTL:  30 * time.Minute,
+    Table: "bebo_sessions",
+})
+_ = pgStore.EnsureTable(context.Background())
+```
+
+Note: Postgres requires a driver (pgx/pq) in your app.
+
 ## Metrics
 ```go
 registry := metrics.New()
@@ -174,6 +193,26 @@ app.GET("/metrics", func(ctx *bebo.Context) error {
 })
 ```
 Use `metrics.Handler(registry)` for JSON snapshots.
+
+## Health & Readiness
+```go
+registry := health.New(health.WithTimeout(500 * time.Millisecond))
+registry.Add("db", func(ctx context.Context) error {
+    return db.PingContext(ctx)
+})
+registry.AddReady("cache", func(ctx context.Context) error {
+    return cache.Ping(ctx)
+})
+
+app.GET("/healthz", func(ctx *bebo.Context) error {
+    registry.Handler().ServeHTTP(ctx.ResponseWriter, ctx.Request)
+    return nil
+})
+app.GET("/readyz", func(ctx *bebo.Context) error {
+    registry.ReadyHandler().ServeHTTP(ctx.ResponseWriter, ctx.Request)
+    return nil
+})
+```
 
 ## HTTP Client
 ```go
@@ -189,6 +228,33 @@ client := httpclient.NewClient(httpclient.ClientOptions{
 })
 ```
 
+
+## Realtime (SSE/WebSocket)
+```go
+app.GET("/events", func(ctx *bebo.Context) error {
+    stream, err := realtime.StartSSE(ctx, realtime.SSEOptions{})
+    if err != nil {
+        return err
+    }
+    return stream.Send(realtime.SSEMessage{Event: "status", Data: "ok"})
+})
+
+app.GET("/ws", func(ctx *bebo.Context) error {
+    conn, err := realtime.Upgrade(ctx, realtime.WebSocketOptions{})
+    if err != nil {
+        return err
+    }
+    defer conn.Close()
+
+    for {
+        msg, err := conn.ReadText()
+        if err != nil {
+            return err
+        }
+        _ = conn.WriteText("echo: " + msg)
+    }
+})
+```
 
 ## OpenTelemetry (optional)
 OpenTelemetry support lives behind the `otel` build tag. Add the OpenTelemetry SDK to your project and build with `-tags otel`.
@@ -381,12 +447,14 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `config/`: config defaults + env overrides + JSON loader
 - `validate/`: basic validation helpers
 - `metrics/`: request metrics + Prometheus exporter
+- `health/`: health and readiness checks
 - `session/`: cookie-backed sessions + memory store
 - `flash/`: flash messages
 - `auth/`: JWT authenticator helper
 - `openapi/`: OpenAPI builder + handler
 - `otel/`: OpenTelemetry adapter (build tag)
 - `httpclient/`: HTTP client utilities (retry/backoff/breaker)
+- `realtime/`: SSE + WebSocket helpers
 - `db/`: database helpers
 - `migrate/`: SQL migration runner
 - `desktop/`: Fyne helpers
