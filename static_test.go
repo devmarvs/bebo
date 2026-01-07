@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestStaticETag(t *testing.T) {
@@ -38,5 +39,25 @@ func TestStaticETag(t *testing.T) {
 
 	if rec.Code != http.StatusNotModified {
 		t.Fatalf("expected 304, got %d", rec.Code)
+	}
+}
+
+func TestStaticFS(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("ok")},
+	}
+
+	app := New()
+	app.StaticFS("/static", fsys, StaticETag(false))
+
+	req := httptest.NewRequest(http.MethodGet, "/static/index.html", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("expected body %q, got %q", "ok", rec.Body.String())
 	}
 }

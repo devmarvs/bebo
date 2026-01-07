@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
@@ -23,6 +24,8 @@ type Options struct {
 	Layout string
 	Funcs  FuncMap
 	Reload bool
+	// DevDir loads templates from disk when Reload is enabled (useful with embedded templates).
+	DevDir string
 	// IncludeSubdirs enables loading templates from nested directories.
 	IncludeSubdirs bool
 	// Partials lists glob patterns (relative to the templates dir) treated as partials.
@@ -34,7 +37,9 @@ type RenderFunc func(http.ResponseWriter) error
 
 // Engine renders HTML templates.
 type Engine struct {
+	fs        fs.FS
 	dir       string
+	devDir    string
 	layout    string
 	templates map[string]*template.Template
 	loaded    bool
@@ -54,6 +59,23 @@ func NewEngine(dir, layout string) (*Engine, error) {
 func NewEngineWithOptions(dir string, options Options) (*Engine, error) {
 	engine := &Engine{
 		dir:       dir,
+		devDir:    options.DevDir,
+		layout:    options.Layout,
+		funcs:     options.Funcs,
+		reload:    options.Reload,
+		partials:  options.Partials,
+		recursive: options.IncludeSubdirs,
+	}
+	return engine, engine.Load()
+}
+
+// NewEngineFromFS builds a template engine from an fs.FS.
+func NewEngineFromFS(fsys fs.FS, dir string, options Options) (*Engine, error) {
+	cleanDir := strings.TrimPrefix(path.Clean("/"+dir), "/")
+	engine := &Engine{
+		fs:        fsys,
+		dir:       cleanDir,
+		devDir:    options.DevDir,
 		layout:    options.Layout,
 		funcs:     options.Funcs,
 		reload:    options.Reload,
@@ -80,13 +102,23 @@ func (e *Engine) AddFuncs(funcs FuncMap) error {
 	return nil
 }
 
-// Load parses templates from disk.
+// Load parses templates.
 func (e *Engine) Load() error {
-	if e.dir == "" {
+	if e.fs != nil {
+		if e.reload && e.devDir != "" {
+			return e.loadFromDisk(e.devDir)
+		}
+		return e.loadFromFS()
+	}
+	return e.loadFromDisk(e.dir)
+}
+
+func (e *Engine) loadFromDisk(dir string) error {
+	if dir == "" {
 		return nil
 	}
 
-	files, err := findTemplateFiles(e.dir, e.recursive)
+	files, err := findTemplateFiles(dir, e.recursive)
 	if err != nil {
 		return err
 	}
@@ -96,10 +128,10 @@ func (e *Engine) Load() error {
 
 	layoutPath := ""
 	if e.layout != "" {
-		layoutPath = filepath.Join(e.dir, e.layout)
+		layoutPath = filepath.Join(dir, e.layout)
 	}
 
-	pages, partials, err := classifyTemplates(e.dir, files, layoutPath, e.partials)
+	pages, partials, err := classifyTemplates(dir, files, layoutPath, e.partials)
 	if err != nil {
 		return err
 	}
@@ -109,11 +141,58 @@ func (e *Engine) Load() error {
 
 	templates := make(map[string]*template.Template)
 	for _, page := range pages {
-		pageName, err := templateName(e.dir, page)
+		pageName, err := templateName(dir, page)
 		if err != nil {
 			return err
 		}
-		tmpl, err := parseTemplateSet(e.dir, layoutPath, page, partials, e.funcs)
+		tmpl, err := parseTemplateSet(dir, layoutPath, page, partials, e.funcs)
+		if err != nil {
+			return err
+		}
+		templates[pageName] = tmpl
+	}
+
+	e.mu.Lock()
+	e.templates = templates
+	e.loaded = true
+	e.mu.Unlock()
+
+	return nil
+}
+
+func (e *Engine) loadFromFS() error {
+	if e.fs == nil {
+		return nil
+	}
+
+	files, err := findTemplateFilesFS(e.fs, e.dir, e.recursive)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return errors.New("no templates found")
+	}
+
+	layoutPath := ""
+	if e.layout != "" {
+		layoutPath = path.Join(e.dir, e.layout)
+	}
+
+	pages, partials, err := classifyTemplatesFS(e.dir, files, layoutPath, e.partials)
+	if err != nil {
+		return err
+	}
+	if len(pages) == 0 {
+		return errors.New("no page templates found")
+	}
+
+	templates := make(map[string]*template.Template)
+	for _, page := range pages {
+		pageName, err := templateNameFS(e.dir, page)
+		if err != nil {
+			return err
+		}
+		tmpl, err := parseTemplateSetFS(e.fs, e.dir, layoutPath, page, partials, e.funcs)
 		if err != nil {
 			return err
 		}
@@ -360,6 +439,25 @@ func parseTemplateSet(dir, layoutPath, pagePath string, partials []string, funcs
 
 func parseTemplateFile(base *template.Template, filePath, name string) error {
 	contents, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	if name == base.Name() {
+		_, err = base.Parse(string(contents))
+		return err
+	}
+
+	if base.Lookup(name) != nil {
+		return fmt.Errorf("template %s already defined", name)
+	}
+
+	_, err = base.New(name).Parse(string(contents))
+	return err
+}
+
+func parseTemplateFileFS(fsys fs.FS, base *template.Template, filePath, name string) error {
+	contents, err := fs.ReadFile(fsys, filePath)
 	if err != nil {
 		return err
 	}

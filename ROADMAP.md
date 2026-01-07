@@ -4,7 +4,7 @@
 - Core app + custom router
 - Route groups, named routes, host-based routing, and version helper
 - Method-not-allowed handling
-- Middleware (request ID, logging, recovery, CORS, body limit, timeout, auth scaffolding, rate limiting)
+- Middleware (request ID, logging, recovery, CORS, body limit, timeout, auth helpers, rate limiting)
 - Security headers, IP allow/deny, CSRF middleware
 - Cookie-based session helper
 - Compression (gzip), response ETag, cache control
@@ -13,7 +13,7 @@
 - Static file helper with cache headers + ETag
 - Config defaults, env overrides, and JSON config loader
 - Validation helpers with struct tags
-- OpenAPI scaffolding (builder + JSON handler)
+- OpenAPI builder + JSON handler
 - HTTP client utilities (retry, backoff, circuit breaker)
 - Form/multipart binding + file upload helpers
 - Configurable logging/metrics/tracing middleware options

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,6 +29,9 @@ type Handler func(*Context) error
 
 // Middleware wraps a handler with additional behavior.
 type Middleware func(Handler) Handler
+
+// PreMiddleware runs before routing.
+type PreMiddleware func(*Context) error
 
 // ErrorHandler processes errors returned by handlers.
 type ErrorHandler func(*Context, error)
@@ -70,16 +74,20 @@ type ErrorPageData struct {
 
 // App is the main framework entrypoint.
 type App struct {
-	router         *router.Router
-	routes         map[router.RouteID]*routeEntry
-	routesByName   map[string]router.RouteID
-	middleware     []Middleware
-	renderer       *render.Engine
-	logger         *slog.Logger
-	config         config.Config
-	templateOpts   render.Options
-	errorHandler   ErrorHandler
-	errorTemplates map[int]string
+	router           *router.Router
+	routes           map[router.RouteID]*routeEntry
+	routesByName     map[string]router.RouteID
+	middleware       []Middleware
+	preMiddleware    []PreMiddleware
+	templateFS       fs.FS
+	templateFSDir    string
+	templateFSDevDir string
+	renderer         *render.Engine
+	logger           *slog.Logger
+	config           config.Config
+	templateOpts     render.Options
+	errorHandler     ErrorHandler
+	errorTemplates   map[int]string
 }
 
 // Option customizes the app instance.
@@ -109,12 +117,29 @@ func New(options ...Option) *App {
 		app.logger = logging.NewLogger(logging.Options{Level: app.config.LogLevel, Format: app.config.LogFormat})
 	}
 
-	if app.renderer == nil && app.config.TemplatesDir != "" {
-		engine, err := render.NewEngineWithOptions(app.config.TemplatesDir, app.templateOpts)
-		if err != nil {
-			app.logger.Error("template load failed", slog.String("error", err.Error()))
-		} else {
-			app.renderer = engine
+	if app.renderer == nil {
+		if app.templateFS != nil {
+			opts := app.templateOpts
+			if opts.Reload {
+				if app.templateFSDevDir != "" {
+					opts.DevDir = app.templateFSDevDir
+				} else if app.config.TemplatesDir != "" {
+					opts.DevDir = app.config.TemplatesDir
+				}
+			}
+			engine, err := render.NewEngineFromFS(app.templateFS, app.templateFSDir, opts)
+			if err != nil {
+				app.logger.Error("template load failed", slog.String("error", err.Error()))
+			} else {
+				app.renderer = engine
+			}
+		} else if app.config.TemplatesDir != "" {
+			engine, err := render.NewEngineWithOptions(app.config.TemplatesDir, app.templateOpts)
+			if err != nil {
+				app.logger.Error("template load failed", slog.String("error", err.Error()))
+			} else {
+				app.renderer = engine
+			}
 		}
 	}
 
@@ -181,6 +206,21 @@ func WithTemplateSubdirs(enabled bool) Option {
 	}
 }
 
+// WithTemplateFS configures embedded templates from an fs.FS.
+func WithTemplateFS(fsys fs.FS, dir string) Option {
+	return func(app *App) {
+		app.templateFS = fsys
+		app.templateFSDir = dir
+	}
+}
+
+// WithTemplateFSDevDir sets a disk path for template reloads when using embedded templates.
+func WithTemplateFSDevDir(dir string) Option {
+	return func(app *App) {
+		app.templateFSDevDir = dir
+	}
+}
+
 // WithErrorHandler overrides the default error handler.
 func WithErrorHandler(handler ErrorHandler) Option {
 	return func(app *App) {
@@ -199,6 +239,11 @@ func WithErrorTemplates(templates map[int]string) Option {
 // Use registers global middleware.
 func (a *App) Use(middleware ...Middleware) {
 	a.middleware = append(a.middleware, middleware...)
+}
+
+// UsePre registers pre-routing middleware.
+func (a *App) UsePre(middleware ...PreMiddleware) {
+	a.preMiddleware = append(a.preMiddleware, middleware...)
 }
 
 // Route registers a route with options.
@@ -314,11 +359,17 @@ func (a *App) handleWithOptions(method, path string, handler Handler, middleware
 
 // ServeHTTP implements http.Handler.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := NewContext(w, r, router.Params{}, a)
+	if err := a.runPreMiddleware(ctx); err != nil {
+		a.errorHandler(ctx, err)
+		return
+	}
+	r = ctx.Request
+
 	reqHost := requestHost(r)
 	id, params, ok := a.router.MatchHost(r.Method, reqHost, r.URL.Path)
 	if !ok {
 		allowed := a.router.AllowedHost(reqHost, r.URL.Path)
-		ctx := NewContext(w, r, router.Params{}, a)
 		if len(allowed) > 0 {
 			w.Header().Set("Allow", strings.Join(allowed, ", "))
 			a.runWithMiddleware(ctx, func(ctx *Context) error {
@@ -333,7 +384,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entry := a.routes[id]
-	ctx := NewContext(w, r, params, a)
+	ctx.Params = params
 
 	h := entry.handler
 	for i := len(entry.middleware) - 1; i >= 0; i-- {
@@ -406,6 +457,15 @@ func (a *App) RunWithSignals() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return a.Run(ctx)
+}
+
+func (a *App) runPreMiddleware(ctx *Context) error {
+	for _, middleware := range a.preMiddleware {
+		if err := middleware(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) runWithMiddleware(ctx *Context, handler Handler) {

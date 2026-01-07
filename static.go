@@ -1,7 +1,10 @@
 package bebo
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
 	"path"
 	"strings"
@@ -63,6 +66,28 @@ func (a *App) Static(prefix, dir string, options ...StaticOption) {
 	a.HEAD(pattern, handler)
 }
 
+// StaticFS registers a static file route from an fs.FS.
+func (a *App) StaticFS(prefix string, fsys fs.FS, options ...StaticOption) {
+	cfg := staticConfig{
+		cacheControl: "public, max-age=86400",
+		etag:         true,
+		indexFile:    "index.html",
+		paramName:    "path",
+	}
+	for _, opt := range options {
+		opt(&cfg)
+	}
+
+	pattern := buildStaticPattern(prefix, cfg.paramName)
+	handler := func(ctx *Context) error {
+		rel := ctx.Param(cfg.paramName)
+		return serveStaticFS(ctx, fsys, rel, cfg)
+	}
+
+	a.GET(pattern, handler)
+	a.HEAD(pattern, handler)
+}
+
 func buildStaticPattern(prefix, param string) string {
 	prefix = cleanPrefix(prefix)
 	if prefix == "" || prefix == "/" {
@@ -117,6 +142,66 @@ func serveStatic(ctx *Context, dir, rel string, cfg staticConfig) error {
 	}
 
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+	return nil
+}
+
+func serveStaticFS(ctx *Context, fsys fs.FS, rel string, cfg staticConfig) error {
+	if fsys == nil {
+		return apperr.Internal("static fs missing", nil)
+	}
+	if rel == "" {
+		rel = cfg.indexFile
+	}
+	if rel == "" {
+		return apperr.NotFound("not found", nil)
+	}
+
+	clean := path.Clean("/" + rel)
+	clean = strings.TrimPrefix(clean, "/")
+
+	file, err := fsys.Open(clean)
+	if err != nil {
+		return apperr.NotFound("not found", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return apperr.Internal("file stat failed", err)
+	}
+
+	if info.IsDir() {
+		if cfg.indexFile == "" {
+			return apperr.NotFound("not found", nil)
+		}
+		return serveStaticFS(ctx, fsys, path.Join(clean, cfg.indexFile), cfg)
+	}
+
+	w := ctx.ResponseWriter
+	r := ctx.Request
+	if cfg.cacheControl != "" {
+		w.Header().Set("Cache-Control", cfg.cacheControl)
+	}
+
+	if cfg.etag {
+		etag := buildETag(info.ModTime(), info.Size())
+		w.Header().Set("ETag", etag)
+		if matchETag(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return nil
+		}
+	}
+
+	reader, ok := file.(io.ReadSeeker)
+	if !ok {
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return apperr.Internal("file read failed", err)
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	http.ServeContent(w, r, info.Name(), info.ModTime(), reader)
 	return nil
 }
 

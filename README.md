@@ -3,7 +3,7 @@
 bebo is a batteries-included Go framework focused on building REST APIs and server-rendered web apps with a lightweight custom router. Desktop support is available via Fyne.
 
 ## Status
-- v0.1 scaffold with custom router, middleware, JSON/HTML rendering, config defaults, static assets, and examples.
+- v0.1 release with custom router, middleware, JSON/HTML rendering, config defaults, static assets, and examples.
 - Desktop helpers live in `desktop/` and depend on Fyne.
 
 ## Requirements
@@ -16,13 +16,15 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Middleware chain (request ID, recovery, logging, CORS, body limit, timeout, auth, rate limiting)
 - Security headers, IP allow/deny, CSRF protection
 - Cookie-based sessions + in-memory store adapter
+- Flash messages (session-backed) + CSRF template helpers
+- Method override for HTML forms (PUT/PATCH/DELETE)
 - Compression (gzip) + response ETag + cache control
-- JSON and HTML rendering with layouts, template funcs, partials, and reload in dev mode
+- JSON and HTML rendering with layouts, template funcs, partials, reload, and embedded templates
 - HTML error pages with configurable templates
-- Static file helper with cache headers + ETag
+- Static file helper with cache headers + ETag (disk or fs.FS)
 - Metrics registry + JSON handler + histogram buckets + Prometheus exporter
 - Tracing hooks middleware + optional OpenTelemetry adapter
-- OpenAPI scaffolding (builder + JSON handler)
+- OpenAPI builder + JSON handler
 - HTTP client utilities (timeouts, retries, backoff, circuit breaker)
 - Form/multipart binding + file upload helpers
 - Config defaults + env overrides + JSON config loader
@@ -92,6 +94,7 @@ app.GET("/openapi.json", func(ctx *bebo.Context) error {
 ## Static Assets
 ```go
 app.Static("/static", "./public")
+app.StaticFS("/static", staticFS)
 ```
 
 ## Middleware Examples
@@ -133,6 +136,13 @@ app.POST("/submit", func(ctx *bebo.Context) error {
     return ctx.Text(http.StatusOK, "ok")
 })
 ```
+
+## Method Override (HTML forms)
+```go
+app.UsePre(middleware.MethodOverride(middleware.MethodOverrideOptions{}))
+```
+Forms can send a hidden `_method` field to trigger PUT/PATCH/DELETE.
+
 
 ## IP Allow/Deny
 ```go
@@ -248,6 +258,35 @@ See the runnable example:
 examples/web
 ```
 
+## Template Helpers (CSRF + Flash)
+```go
+store := flash.New(session.NewCookieStore("bebo_session", []byte("secret")))
+
+app := bebo.New(
+    bebo.WithTemplateFuncs(web.Funcs()),
+)
+app.Use(middleware.CSRF(middleware.CSRFOptions{}))
+
+app.GET("/", func(ctx *bebo.Context) error {
+    view, err := web.TemplateDataFrom(ctx, &store, pageData)
+    if err != nil {
+        return err
+    }
+    return ctx.HTML(http.StatusOK, "home.html", view)
+})
+```
+Template usage:
+```html
+<form method="post">
+  {{ csrfField .CSRFToken }}
+</form>
+<ul>
+  {{ range .Flash }}
+  <li class="flash-{{ .Type }}">{{ .Text }}</li>
+  {{ end }}
+</ul>
+```
+
 ## Template Partials
 Enable nested templates and partial discovery. By default, files under `partials/` or prefixed with `_` are treated as partials when subdir loading is enabled.
 
@@ -256,6 +295,27 @@ app := bebo.New(
     bebo.WithTemplateSubdirs(true),
     bebo.WithTemplatePartials("partials/**/*.html", "_*.html"),
 )
+```
+
+## Embedded Templates & Assets
+```go
+import (
+    "embed"
+    "io/fs"
+)
+
+//go:embed templates/* static/*
+var embedded embed.FS
+
+tmplFS, _ := fs.Sub(embedded, "templates")
+staticFS, _ := fs.Sub(embedded, "static")
+
+app := bebo.New(
+    bebo.WithTemplateFS(tmplFS, "."),
+    bebo.WithTemplateFSDevDir("templates"),
+    bebo.WithTemplateReload(true),
+)
+app.StaticFS("/static", staticFS)
 ```
 
 ## HTML Error Pages
@@ -317,10 +377,12 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `middleware/`: built-in middleware
 - `render/`: JSON and HTML rendering
 - `assets/`: cache-busting asset helper
+- `web/`: template helpers (csrf + flash)
 - `config/`: config defaults + env overrides + JSON loader
 - `validate/`: basic validation helpers
 - `metrics/`: request metrics + Prometheus exporter
 - `session/`: cookie-backed sessions + memory store
+- `flash/`: flash messages
 - `auth/`: JWT authenticator helper
 - `openapi/`: OpenAPI builder + handler
 - `otel/`: OpenTelemetry adapter (build tag)
