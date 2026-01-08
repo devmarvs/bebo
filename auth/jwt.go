@@ -32,6 +32,8 @@ var (
 // JWTAuthenticator validates HS256 JWT tokens.
 type JWTAuthenticator struct {
 	Key       []byte
+	Keys      [][]byte
+	KeySet    *JWTKeySet
 	Issuer    string
 	Audience  string
 	Header    string
@@ -49,10 +51,6 @@ func (a JWTAuthenticator) Authenticate(ctx *bebo.Context) (*bebo.Principal, erro
 	token := extractToken(ctx.Request.Header.Get(headerName(a.Header)), a.Scheme)
 	if token == "" {
 		return nil, nil
-	}
-
-	if len(a.Key) == 0 {
-		return nil, ErrInvalidToken
 	}
 
 	claims, err := a.verify(token)
@@ -79,6 +77,7 @@ func (a JWTAuthenticator) verify(token string) (map[string]any, error) {
 
 	var header struct {
 		Alg string `json:"alg"`
+		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		return nil, ErrInvalidToken
@@ -97,7 +96,19 @@ func (a JWTAuthenticator) verify(token string) (map[string]any, error) {
 		return nil, ErrInvalidToken
 	}
 
-	if !verifySignature(a.Key, parts[0]+"."+parts[1], sig) {
+	message := parts[0] + "." + parts[1]
+	keys := a.keysForHeader(header.Kid)
+	if len(keys) == 0 {
+		return nil, ErrInvalidToken
+	}
+	valid := false
+	for _, key := range keys {
+		if verifySignature(key, message, sig) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
 		return nil, ErrInvalidToken
 	}
 
@@ -236,4 +247,36 @@ func audienceMatches(value any, expected string) bool {
 		}
 	}
 	return false
+}
+
+func (a JWTAuthenticator) keysForHeader(kid string) [][]byte {
+	if a.KeySet != nil {
+		if kid != "" {
+			if key, ok := a.KeySet.Lookup(kid); ok {
+				return [][]byte{key.Secret}
+			}
+			return nil
+		}
+		keys := a.KeySet.Keys()
+		out := make([][]byte, 0, len(keys))
+		for _, key := range keys {
+			if len(key.Secret) == 0 {
+				continue
+			}
+			out = append(out, key.Secret)
+		}
+		return out
+	}
+
+	keys := make([][]byte, 0, 1+len(a.Keys))
+	if len(a.Key) > 0 {
+		keys = append(keys, a.Key)
+	}
+	for _, key := range a.Keys {
+		if len(key) == 0 {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
 }

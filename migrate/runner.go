@@ -33,15 +33,50 @@ type Locker interface {
 	Unlock(context.Context, *sql.DB) error
 }
 
+// ErrLockTimeout indicates a lock timeout.
+var ErrLockTimeout = errors.New("migration lock timeout")
+
 // AdvisoryLocker uses PostgreSQL advisory locks.
 type AdvisoryLocker struct {
-	ID int64
+	ID           int64
+	Timeout      time.Duration
+	PollInterval time.Duration
 }
 
 // Lock acquires a PostgreSQL advisory lock.
 func (a AdvisoryLocker) Lock(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", a.ID)
-	return err
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.Timeout <= 0 {
+		_, err := db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", a.ID)
+		return err
+	}
+
+	poll := a.PollInterval
+	if poll <= 0 {
+		poll = 200 * time.Millisecond
+	}
+	deadline := time.Now().Add(a.Timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+
+	for {
+		locked, err := tryAdvisoryLock(ctx, db, a.ID)
+		if err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return ErrLockTimeout
+		}
+		if err := sleepWithContext(ctx, poll); err != nil {
+			return err
+		}
+	}
 }
 
 // Unlock releases a PostgreSQL advisory lock.

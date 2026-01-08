@@ -1,19 +1,14 @@
 package session
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
-)
 
-var errRedisNil = errors.New("redis: nil")
+	"github.com/devmarvs/bebo/redis"
+)
 
 // RedisOptions configures a Redis store.
 type RedisOptions struct {
@@ -38,6 +33,7 @@ type RedisOptions struct {
 // RedisStore stores sessions in Redis using a session ID cookie.
 type RedisStore struct {
 	options RedisOptions
+	client  *redis.Client
 }
 
 // NewRedisStore creates a Redis-backed session store.
@@ -75,7 +71,19 @@ func NewRedisStore(options RedisOptions) *RedisStore {
 			cfg.SameSite = http.SameSiteLaxMode
 		}
 	}
-	return &RedisStore{options: cfg}
+
+	client := redis.New(redis.Options{
+		Network:      cfg.Network,
+		Address:      cfg.Address,
+		Username:     cfg.Username,
+		Password:     cfg.Password,
+		DB:           cfg.DB,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+	})
+
+	return &RedisStore{options: cfg, client: client}
 }
 
 // Get loads a session from the request.
@@ -91,7 +99,7 @@ func (s *RedisStore) Get(r *http.Request) (*Session, error) {
 	}
 
 	payload, err := s.get(cookie.Value)
-	if errors.Is(err, errRedisNil) {
+	if errors.Is(err, redis.ErrNil) {
 		id, err := newSessionID()
 		if err != nil {
 			return nil, err
@@ -189,175 +197,31 @@ func (s *RedisStore) key(id string) string {
 }
 
 func (s *RedisStore) get(id string) ([]byte, error) {
-	var payload []byte
-	return payload, s.withConn(func(conn *redisConn) error {
-		resp, err := conn.do("GET", s.key(id))
-		if err != nil {
-			return err
-		}
-		if resp == nil {
-			return errRedisNil
-		}
-		value, ok := resp.([]byte)
-		if !ok {
-			return errors.New("redis: invalid response")
-		}
-		payload = value
-		return nil
-	})
+	resp, err := s.client.Do("GET", s.key(id))
+	if err != nil {
+		return nil, err
+	}
+	value, ok := resp.([]byte)
+	if !ok {
+		return nil, errors.New("redis: invalid response")
+	}
+	return value, nil
 }
 
 func (s *RedisStore) set(id string, payload []byte) error {
-	return s.withConn(func(conn *redisConn) error {
-		args := []string{"SET", s.key(id), string(payload)}
-		if s.options.TTL > 0 {
-			ms := s.options.TTL.Milliseconds()
-			if ms <= 0 {
-				ms = 1
-			}
-			args = append(args, "PX", strconv.FormatInt(ms, 10))
+	args := []string{"SET", s.key(id), string(payload)}
+	if s.options.TTL > 0 {
+		ms := s.options.TTL.Milliseconds()
+		if ms <= 0 {
+			ms = 1
 		}
-		_, err := conn.do(args...)
-		return err
-	})
+		args = append(args, "PX", strconv.FormatInt(ms, 10))
+	}
+	_, err := s.client.Do(args...)
+	return err
 }
 
 func (s *RedisStore) del(id string) error {
-	return s.withConn(func(conn *redisConn) error {
-		_, err := conn.do("DEL", s.key(id))
-		return err
-	})
-}
-
-func (s *RedisStore) withConn(fn func(*redisConn) error) error {
-	conn, err := s.dial()
-	if err != nil {
-		return err
-	}
-	defer conn.close()
-	return fn(conn)
-}
-
-func (s *RedisStore) dial() (*redisConn, error) {
-	netConn, err := net.DialTimeout(s.options.Network, s.options.Address, s.options.DialTimeout)
-	if err != nil {
-		return nil, err
-	}
-	conn := &redisConn{
-		conn:         netConn,
-		rw:           bufio.NewReadWriter(bufio.NewReader(netConn), bufio.NewWriter(netConn)),
-		readTimeout:  s.options.ReadTimeout,
-		writeTimeout: s.options.WriteTimeout,
-	}
-
-	if s.options.Password != "" {
-		args := []string{"AUTH"}
-		if s.options.Username != "" {
-			args = append(args, s.options.Username, s.options.Password)
-		} else {
-			args = append(args, s.options.Password)
-		}
-		if _, err := conn.do(args...); err != nil {
-			conn.close()
-			return nil, err
-		}
-	}
-	if s.options.DB > 0 {
-		if _, err := conn.do("SELECT", strconv.Itoa(s.options.DB)); err != nil {
-			conn.close()
-			return nil, err
-		}
-	}
-
-	return conn, nil
-}
-
-type redisConn struct {
-	conn         net.Conn
-	rw           *bufio.ReadWriter
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-}
-
-func (c *redisConn) do(args ...string) (any, error) {
-	if err := c.writeCommand(args); err != nil {
-		return nil, err
-	}
-	return c.readResponse()
-}
-
-func (c *redisConn) close() {
-	_ = c.conn.Close()
-}
-
-func (c *redisConn) writeCommand(args []string) error {
-	if c.writeTimeout > 0 {
-		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
-
-	if _, err := fmt.Fprintf(c.rw, "*%d\r\n", len(args)); err != nil {
-		return err
-	}
-	for _, arg := range args {
-		if _, err := fmt.Fprintf(c.rw, "$%d\r\n%s\r\n", len(arg), arg); err != nil {
-			return err
-		}
-	}
-	return c.rw.Flush()
-}
-
-func (c *redisConn) readResponse() (any, error) {
-	if c.readTimeout > 0 {
-		_ = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout))
-	}
-	line, err := c.rw.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	line = strings.TrimSuffix(line, "\r\n")
-	if line == "" {
-		return nil, errors.New("redis: empty response")
-	}
-
-	switch line[0] {
-	case '+':
-		return line[1:], nil
-	case '-':
-		return nil, errors.New(line[1:])
-	case ':':
-		value, err := strconv.ParseInt(line[1:], 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		return value, nil
-	case '$':
-		length, err := strconv.Atoi(line[1:])
-		if err != nil {
-			return nil, err
-		}
-		if length == -1 {
-			return nil, nil
-		}
-		buf := make([]byte, length+2)
-		if _, err := io.ReadFull(c.rw, buf); err != nil {
-			return nil, err
-		}
-		return buf[:length], nil
-	case '*':
-		count, err := strconv.Atoi(line[1:])
-		if err != nil {
-			return nil, err
-		}
-		items := make([]any, 0, count)
-		for i := 0; i < count; i++ {
-			item, err := c.readResponse()
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, item)
-		}
-		return items, nil
-	default:
-		return nil, errors.New("redis: unknown response")
-	}
+	_, err := s.client.Do("DEL", s.key(id))
+	return err
 }

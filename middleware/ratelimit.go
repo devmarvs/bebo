@@ -81,16 +81,24 @@ func (l *Limiter) Allow(key string) bool {
 	return true
 }
 
+// AllowFunc evaluates whether a request should proceed.
+type AllowFunc func(*bebo.Context, string) (bool, error)
+
 // KeyFunc extracts a rate limiting key from the request.
 type KeyFunc func(*bebo.Context) string
 
 // LimitHandler handles rate limit violations.
 type LimitHandler func(*bebo.Context) error
 
+// ErrorHandler handles rate limiter errors.
+type ErrorHandler func(*bebo.Context, error) error
+
 type rateLimitConfig struct {
 	keyFunc    KeyFunc
 	onLimit    LimitHandler
+	onError    ErrorHandler
 	retryAfter time.Duration
+	failOpen   bool
 }
 
 // RateLimitOption customizes rate limit middleware behavior.
@@ -110,6 +118,20 @@ func RateLimitHandler(fn LimitHandler) RateLimitOption {
 	}
 }
 
+// RateLimitOnError sets the handler for limiter errors.
+func RateLimitOnError(fn ErrorHandler) RateLimitOption {
+	return func(cfg *rateLimitConfig) {
+		cfg.onError = fn
+	}
+}
+
+// RateLimitFailOpen allows requests when the limiter errors.
+func RateLimitFailOpen(enabled bool) RateLimitOption {
+	return func(cfg *rateLimitConfig) {
+		cfg.failOpen = enabled
+	}
+}
+
 // RateLimitRetryAfter sets the Retry-After header duration.
 func RateLimitRetryAfter(duration time.Duration) RateLimitOption {
 	return func(cfg *rateLimitConfig) {
@@ -119,6 +141,16 @@ func RateLimitRetryAfter(duration time.Duration) RateLimitOption {
 
 // RateLimit enforces a token bucket rate limit.
 func RateLimit(limiter *Limiter, options ...RateLimitOption) bebo.Middleware {
+	return RateLimitWith(func(_ *bebo.Context, key string) (bool, error) {
+		if limiter == nil {
+			return false, apperr.Internal("rate limiter not configured", nil)
+		}
+		return limiter.Allow(key), nil
+	}, options...)
+}
+
+// RateLimitWith enforces a rate limit using a custom allow function.
+func RateLimitWith(allow AllowFunc, options ...RateLimitOption) bebo.Middleware {
 	cfg := rateLimitConfig{keyFunc: clientIP, retryAfter: 0}
 	for _, opt := range options {
 		opt(&cfg)
@@ -126,28 +158,46 @@ func RateLimit(limiter *Limiter, options ...RateLimitOption) bebo.Middleware {
 
 	return func(next bebo.Handler) bebo.Handler {
 		return func(ctx *bebo.Context) error {
-			if limiter == nil {
-				return apperr.Internal("rate limiter not configured", nil)
-			}
-
-			key := cfg.keyFunc(ctx)
-			if key == "" {
-				return next(ctx)
-			}
-
-			if !limiter.Allow(key) {
-				if cfg.retryAfter > 0 {
-					ctx.ResponseWriter.Header().Set("Retry-After", formatRetryAfter(cfg.retryAfter))
-				}
-				if cfg.onLimit != nil {
-					return cfg.onLimit(ctx)
-				}
-				return apperr.RateLimited("rate limit exceeded", nil)
-			}
-
-			return next(ctx)
+			return applyRateLimit(ctx, allow, cfg, next)
 		}
 	}
+}
+
+func applyRateLimit(ctx *bebo.Context, allow AllowFunc, cfg rateLimitConfig, next bebo.Handler) error {
+	if allow == nil {
+		return apperr.Internal("rate limiter not configured", nil)
+	}
+
+	key := cfg.keyFunc(ctx)
+	if key == "" {
+		return next(ctx)
+	}
+
+	allowed, err := allow(ctx, key)
+	if err != nil {
+		if cfg.onError != nil {
+			return cfg.onError(ctx, err)
+		}
+		if cfg.failOpen {
+			return next(ctx)
+		}
+		if appErr := apperr.As(err); appErr != nil {
+			return appErr
+		}
+		return apperr.Internal("rate limiter error", err)
+	}
+
+	if !allowed {
+		if cfg.retryAfter > 0 {
+			ctx.ResponseWriter.Header().Set("Retry-After", formatRetryAfter(cfg.retryAfter))
+		}
+		if cfg.onLimit != nil {
+			return cfg.onLimit(ctx)
+		}
+		return apperr.RateLimited("rate limit exceeded", nil)
+	}
+
+	return next(ctx)
 }
 
 func clientIP(ctx *bebo.Context) string {

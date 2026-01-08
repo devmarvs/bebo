@@ -17,8 +17,11 @@ func DefaultLogFields() []LogField {
 	return []LogField{
 		LogMethod(),
 		LogPath(),
+		LogTraceID(),
+		LogSpanID(),
 		LogStatus(),
 		LogDuration(),
+		LogRequestBytes(),
 		LogBytes(),
 	}
 }
@@ -58,6 +61,35 @@ func LogBytes() LogField {
 	}
 }
 
+// LogRequestBytes logs request size in bytes (from Content-Length when provided).
+func LogRequestBytes() LogField {
+	return func(ctx *bebo.Context, _ *responseRecorder, _ time.Duration) slog.Attr {
+		return slog.Int64("request_bytes", ctx.Request.ContentLength)
+	}
+}
+
+// LogTraceID logs the trace id from the traceparent header.
+func LogTraceID() LogField {
+	return func(ctx *bebo.Context, _ *responseRecorder, _ time.Duration) slog.Attr {
+		traceID, _, ok := traceParentIDs(ctx.Request.Header.Get("traceparent"))
+		if !ok {
+			return slog.String("trace_id", "")
+		}
+		return slog.String("trace_id", traceID)
+	}
+}
+
+// LogSpanID logs the span id from the traceparent header.
+func LogSpanID() LogField {
+	return func(ctx *bebo.Context, _ *responseRecorder, _ time.Duration) slog.Attr {
+		_, spanID, ok := traceParentIDs(ctx.Request.Header.Get("traceparent"))
+		if !ok {
+			return slog.String("span_id", "")
+		}
+		return slog.String("span_id", spanID)
+	}
+}
+
 // LogRemoteAddr logs the client IP.
 func LogRemoteAddr() LogField {
 	return func(ctx *bebo.Context, _ *responseRecorder, _ time.Duration) slog.Attr {
@@ -88,4 +120,48 @@ func LogRequestID() LogField {
 	return func(ctx *bebo.Context, _ *responseRecorder, _ time.Duration) slog.Attr {
 		return slog.String("request_id", ctx.RequestID())
 	}
+}
+
+func traceParentIDs(header string) (string, string, bool) {
+	if header == "" {
+		return "", "", false
+	}
+	parts := strings.Split(header, "-")
+	if len(parts) != 4 {
+		return "", "", false
+	}
+	traceID := strings.ToLower(parts[1])
+	spanID := strings.ToLower(parts[2])
+	if len(traceID) != 32 || len(spanID) != 16 {
+		return "", "", false
+	}
+	if !isHex(traceID) || !isHex(spanID) {
+		return "", "", false
+	}
+	if isAllZero(traceID) || isAllZero(spanID) {
+		return "", "", false
+	}
+	return traceID, spanID, true
+}
+
+func isHex(value string) bool {
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r >= 'a' && r <= 'f' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isAllZero(value string) bool {
+	for _, r := range value {
+		if r != '0' {
+			return false
+		}
+	}
+	return true
 }
