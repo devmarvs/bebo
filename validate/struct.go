@@ -148,7 +148,9 @@ func Struct(value any) error {
 	}
 
 	if len(errs) > 0 {
-		return apperr.Validation("validation failed", &Errors{Fields: errs})
+		err := apperr.Validation("validation failed", &Errors{Fields: errs})
+		notifyHooks(value, err)
+		return err
 	}
 
 	return nil

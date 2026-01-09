@@ -38,6 +38,20 @@ func NewContext(w http.ResponseWriter, r *http.Request, params router.Params, ap
 	}
 }
 
+
+// App returns the owning app instance when available.
+func (c *Context) App() *App {
+	return c.app
+}
+
+// AuthHooks returns configured auth hooks when available.
+func (c *Context) AuthHooks() AuthHooks {
+	if c.app == nil {
+		return AuthHooks{}
+	}
+	return c.app.authHooks
+}
+
 // Param returns a route param.
 func (c *Context) Param(name string) string {
 	return c.Params[name]

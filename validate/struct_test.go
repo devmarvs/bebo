@@ -78,3 +78,17 @@ func TestCustomValidator(t *testing.T) {
 		t.Fatalf("expected 1 field error, got %d", len(verr.Fields))
 	}
 }
+
+func TestValidationHooksOnError(t *testing.T) {
+	called := false
+	SetHooks(Hooks{OnError: func(value any, err error) {
+		called = true
+	}})
+	defer SetHooks(Hooks{})
+
+	_ = Struct(userInput{Name: "", Email: "bad"})
+
+	if !called {
+		t.Fatalf("expected validation hook to be called")
+	}
+}

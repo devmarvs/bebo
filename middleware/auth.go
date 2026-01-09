@@ -45,7 +45,15 @@ func RequireAuthorization(auth bebo.Authenticator, authorizer bebo.Authorizer, o
 				return apperr.Internal("authenticator not configured", nil)
 			}
 
+			hooks := ctx.AuthHooks()
+			if hooks.BeforeAuthenticate != nil {
+				hooks.BeforeAuthenticate(ctx)
+			}
+
 			principal, err := auth.Authenticate(ctx)
+			if hooks.AfterAuthenticate != nil {
+				hooks.AfterAuthenticate(ctx, principal, err)
+			}
 			if err != nil || principal == nil {
 				return apperr.Unauthorized(cfg.unauthorizedMessage, err)
 			}

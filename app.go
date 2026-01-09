@@ -88,6 +88,8 @@ type App struct {
 	templateOpts     render.Options
 	errorHandler     ErrorHandler
 	errorTemplates   map[int]string
+	registry         *Registry
+	authHooks        AuthHooks
 }
 
 // Option customizes the app instance.
@@ -107,6 +109,8 @@ func New(options ...Option) *App {
 		templateOpts:   render.Options{Layout: cfg.LayoutTemplate, Reload: cfg.TemplateReload},
 		errorHandler:   defaultErrorHandler,
 		errorTemplates: nil,
+		registry:       NewRegistry(),
+		authHooks:      AuthHooks{},
 	}
 
 	for _, opt := range options {
@@ -234,6 +238,43 @@ func WithErrorTemplates(templates map[int]string) Option {
 	return func(app *App) {
 		app.errorTemplates = copyErrorTemplates(templates)
 	}
+}
+
+
+// WithRegistry sets a custom registry for extensibility.
+func WithRegistry(registry *Registry) Option {
+	return func(app *App) {
+		if registry == nil {
+			app.registry = NewRegistry()
+			return
+		}
+		app.registry = registry
+	}
+}
+
+// WithAuthHooks configures authentication hooks.
+func WithAuthHooks(hooks AuthHooks) Option {
+	return func(app *App) {
+		app.authHooks = hooks
+	}
+}
+
+// Registry returns the app registry.
+func (a *App) Registry() *Registry {
+	if a.registry == nil {
+		a.registry = NewRegistry()
+	}
+	return a.registry
+}
+
+// AuthHooks returns the configured auth hooks.
+func (a *App) AuthHooks() AuthHooks {
+	return a.authHooks
+}
+
+// SetAuthHooks updates the auth hooks.
+func (a *App) SetAuthHooks(hooks AuthHooks) {
+	a.authHooks = hooks
 }
 
 // Use registers global middleware.

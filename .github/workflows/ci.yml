@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format
+        run: |
+          test -z "$(gofmt -l .)"
+      - name: Vet
+        run: |
+          pkgs=$(go list ./... | grep -v '/examples/desktop' | grep -v '/desktop')
+          go vet ${pkgs}
+      - name: Test
+        run: |
+          pkgs=$(go list ./... | grep -v '/examples/desktop' | grep -v '/desktop')
+          go test ${pkgs}

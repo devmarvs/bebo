@@ -37,6 +37,8 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Form/multipart binding + file upload helpers
 - Config defaults + env overrides + JSON config loader + layered profiles (base/env/secrets) with validation
 - Validation helpers (including struct tags, non-string fields, and custom validators)
+- Extensibility registry + auth/cache/validation hooks
+- Optional integrations as submodules (redis/postgres/otel)
 - Graceful shutdown helpers
 - Minimal CLI generator + migration commands
 - DB helpers + SQL migrations runner
@@ -546,6 +548,9 @@ See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
 - Production runbook: `docs/runbook.md`
 - Scaling: `docs/scaling.md`
 - Timeouts & circuit breakers: `docs/timeouts.md`
+- Config profiles: `docs/config-profiles.md`
+- Extensibility: `docs/extensibility.md`
+- Integrations: `docs/integrations.md`
 - Project structure: `docs/project-structure.md`
 - Migration guide: `docs/migration-guide.md`
 - Deployment examples: `deploy/docker/Dockerfile`, `deploy/k8s/`
@@ -553,7 +558,7 @@ See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
 
 ## CLI
 ```sh
-bebo new ./myapp -module github.com/me/myapp -template
+bebo new ./myapp -module github.com/me/myapp -template -profile
 bebo route add -method GET -path /users/:id -name user.show
 bebo crud new users -dir handlers -package handlers -templates templates
 bebo migrate new -dir ./migrations -name create_users
@@ -603,6 +608,7 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `desktop/`: Fyne helpers
 - `docs/`: security, runbooks, and guides
 - `deploy/`: container and Kubernetes examples
+- `integrations/`: optional submodules (redis/postgres/otel)
 - `examples/`: API, web, desktop, and CRUD samples
 
 ## Roadmap

@@ -39,7 +39,7 @@ func main() {
 func usage() {
 	fmt.Println("bebo CLI")
 	fmt.Println("\nCommands:")
-	fmt.Println("  bebo new <dir> -module <module> [-version v0.0.0] [-template]")
+	fmt.Println("  bebo new <dir> -module <module> [-version v0.0.0] [-template] [-profile]")
 	fmt.Println("  bebo route add -method GET -path /users/:id [-name user.show]")
 	fmt.Println("  bebo crud new <resource> [-dir handlers] [-package handlers] [-templates templates] [-tests=true]")
 	fmt.Println("  bebo migrate new -dir ./migrations -name create_users")
@@ -53,10 +53,11 @@ func newCmd(args []string) {
 	module := fs.String("module", "", "Go module path (required)")
 	version := fs.String("version", "v0.0.0", "bebo version for go.mod")
 	template := fs.Bool("template", false, "include templates")
+	profile := fs.Bool("profile", false, "include config profiles")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 || *module == "" {
-		fmt.Println("usage: bebo new <dir> -module <module> [-version v0.0.0] [-template]")
+		fmt.Println("usage: bebo new <dir> -module <module> [-version v0.0.0] [-template] [-profile]")
 		return
 	}
 
@@ -68,7 +69,7 @@ func newCmd(args []string) {
 	if err := writeFile(filepath.Join(dir, "go.mod"), goMod(*module, *version)); err != nil {
 		fatal(err)
 	}
-	if err := writeFile(filepath.Join(dir, "main.go"), mainGo(*module)); err != nil {
+	if err := writeFile(filepath.Join(dir, "main.go"), mainGo(*module, *profile)); err != nil {
 		fatal(err)
 	}
 	if err := writeFile(filepath.Join(dir, "README.md"), readme(*module)); err != nil {
@@ -86,6 +87,23 @@ func newCmd(args []string) {
 		if err := writeFile(filepath.Join(tmplDir, "home.html"), homeTemplate()); err != nil {
 			fatal(err)
 		}
+	}
+
+	if *profile {
+		configDir := filepath.Join(dir, "config")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			fatal(err)
+		}
+		if err := writeFile(filepath.Join(configDir, "base.json"), configBaseTemplate()); err != nil {
+			fatal(err)
+		}
+		if err := writeFile(filepath.Join(configDir, "development.json"), configEnvTemplate()); err != nil {
+			fatal(err)
+		}
+		if err := writeFile(filepath.Join(configDir, "secrets.example.json"), configSecretsTemplate()); err != nil {
+			fatal(err)
+		}
+		_ = writeFileIfNotExists(filepath.Join(dir, ".gitignore"), gitignoreTemplate())
 	}
 
 	fmt.Println("project created at", dir)
@@ -352,8 +370,47 @@ func goMod(module, version string) string {
 	return fmt.Sprintf("module %s\n\ngo 1.25\n\nrequire github.com/devmarvs/bebo %s\n", module, version)
 }
 
-func mainGo(module string) string {
+func mainGo(module string, withProfile bool) string {
 	_ = module
+	if withProfile {
+		return `package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/devmarvs/bebo"
+	"github.com/devmarvs/bebo/config"
+	"github.com/devmarvs/bebo/middleware"
+)
+
+func main() {
+	profile := config.Profile{
+		BasePath:    "config/base.json",
+		EnvPath:     "config/development.json",
+		SecretsPath: "config/secrets.json",
+		EnvPrefix:   "BEBO_",
+		AllowMissing: true,
+	}
+	cfg, err := config.LoadProfile(profile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app := bebo.New(bebo.WithConfig(cfg))
+	app.Use(middleware.RequestID(), middleware.Recover(), middleware.Logger())
+
+	app.GET("/health", func(ctx *bebo.Context) error {
+		return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	if err := app.RunWithSignals(); err != nil {
+		log.Fatal(err)
+	}
+}
+`
+	}
+
 	return `package main
 
 import (
@@ -403,6 +460,42 @@ func homeTemplate() string {
 <h1>{{ .Title }}</h1>
 {{ end }}
 `
+}
+
+
+func configBaseTemplate() string {
+	return `{
+  "Address": ":8080",
+  "ReadTimeout": "10s",
+  "WriteTimeout": "20s",
+  "IdleTimeout": "60s",
+  "ReadHeaderTimeout": "5s",
+  "ShutdownTimeout": "10s",
+  "MaxHeaderBytes": 1048576,
+  "TemplatesDir": "templates",
+  "LayoutTemplate": "layout.html",
+  "TemplateReload": false,
+  "LogLevel": "info",
+  "LogFormat": "text"
+}
+`
+}
+
+func configEnvTemplate() string {
+	return `{
+  "TemplateReload": true,
+  "LogLevel": "debug"
+}
+`
+}
+
+func configSecretsTemplate() string {
+	return `{}
+`
+}
+
+func gitignoreTemplate() string {
+	return "config/secrets.json\n"
 }
 
 func writeFile(path, contents string) error {
