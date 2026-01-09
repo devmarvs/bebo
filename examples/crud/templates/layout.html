@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Data.Title }}</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      font-family: "Source Serif 4", "Georgia", serif;
+      background: #f5f2ea;
+      color: #1b1b1b;
+    }
+    header {
+      background: #111;
+      color: #f5f5f5;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header a {
+      color: #f5f5f5;
+      text-decoration: none;
+      margin-right: 1rem;
+    }
+    header .brand {
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+    }
+    main {
+      padding: 2rem;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e2df;
+      border-radius: 14px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+    }
+    .actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: #1d4ed8;
+      color: #fff;
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .btn.secondary {
+      background: #334155;
+    }
+    .btn.ghost {
+      background: transparent;
+      color: #1d4ed8;
+      border: 1px solid #c7d2fe;
+    }
+    .inline {
+      display: inline;
+    }
+    .muted {
+      color: #6b6b6b;
+      font-size: 0.9rem;
+    }
+    .flash-stack {
+      margin-bottom: 1rem;
+    }
+    .flash {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+    }
+    .flash-success {
+      background: #dcfce7;
+      color: #14532d;
+    }
+    .flash-error {
+      background: #fee2e2;
+      color: #7f1d1d;
+    }
+    form label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 600;
+    }
+    form input, form textarea {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid #cbd5f5;
+      margin-bottom: 1rem;
+      font-family: inherit;
+      font-size: 1rem;
+    }
+    form textarea {
+      min-height: 180px;
+      resize: vertical;
+    }
+    .note-body {
+      white-space: pre-wrap;
+    }
+    @media (max-width: 720px) {
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+      main {
+        padding: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">bebo notes</div>
+    <nav class="actions">
+      {{ if .Data.User }}
+        <span class="muted">{{ .Data.User.Email }}</span>
+        <a href="/notes">Notes</a>
+        <form method="post" action="/logout" class="inline">
+          {{ csrfField .CSRFToken }}
+          <button class="btn ghost" type="submit">Sign out</button>
+        </form>
+      {{ else }}
+        <a href="/login">Log in</a>
+        <a href="/signup">Sign up</a>
+      {{ end }}
+    </nav>
+  </header>
+  <main>
+    {{ template "flash" . }}
+    {{ template "content" . }}
+  </main>
+</body>
+</html>

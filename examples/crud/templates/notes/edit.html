@@ -1,0 +1,17 @@
+{{ define "content" }}
+<div class="card">
+  <h1>Edit note</h1>
+  <form method="post" action="/notes/{{ .Data.Note.ID }}">
+    {{ csrfField .CSRFToken }}
+    <input type="hidden" name="_method" value="PUT">
+    <label for="title">Title</label>
+    <input id="title" type="text" name="title" value="{{ .Data.Note.Title }}" required>
+    <label for="body">Body</label>
+    <textarea id="body" name="body" required>{{ .Data.Note.Body }}</textarea>
+    <div class="actions">
+      <button class="btn" type="submit">Update note</button>
+      <a class="btn secondary" href="/notes/{{ .Data.Note.ID }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{{ end }}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bebo-app
+  labels:
+    app: bebo-app
+spec:
+  type: ClusterIP
+  selector:
+    app: bebo-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

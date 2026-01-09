@@ -1,0 +1,15 @@
+{{ define "content" }}
+<div class="card">
+  <h1>Sign up</h1>
+  <p class="muted">Create an account to start writing notes.</p>
+  <form method="post" action="/signup">
+    {{ csrfField .CSRFToken }}
+    <label for="email">Email</label>
+    <input id="email" type="email" name="email" value="{{ .Data.Email }}" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" name="password" required>
+    <button class="btn" type="submit">Create account</button>
+  </form>
+  <p class="muted">Already have an account? <a href="/login">Log in</a></p>
+</div>
+{{ end }}

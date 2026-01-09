@@ -1,0 +1,16 @@
+{{ define "content" }}
+<div class="card">
+  <h1>New note</h1>
+  <form method="post" action="/notes">
+    {{ csrfField .CSRFToken }}
+    <label for="title">Title</label>
+    <input id="title" type="text" name="title" required>
+    <label for="body">Body</label>
+    <textarea id="body" name="body" required></textarea>
+    <div class="actions">
+      <button class="btn" type="submit">Save note</button>
+      <a class="btn secondary" href="/notes">Cancel</a>
+    </div>
+  </form>
+</div>
+{{ end }}

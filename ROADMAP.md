@@ -2,6 +2,7 @@
 
 ## v0.1 (current)
 - Core app + custom router
+- Versioning/deprecation policy + changelog + compat tests
 - Route groups, named routes, host-based routing, and version helper
 - Method-not-allowed handling
 - Middleware (request ID, logging, recovery, CORS, body limit, timeout, auth helpers, rate limiting)
@@ -17,6 +18,7 @@
 - Config profiles (base/env/secrets) with validation
 - Health/ready checks registry
 - Validation helpers with struct tags
+- Benchmarks (router, JSON, templates) + concurrency tests
 - OpenAPI builder + JSON handler
 - HTTP client utilities (retry, backoff, circuit breaker)
 - Task runner (in-process queue, retries/backoff, dead-letter hooks)

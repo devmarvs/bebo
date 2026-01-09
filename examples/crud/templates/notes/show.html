@@ -1,0 +1,16 @@
+{{ define "content" }}
+<div class="card">
+  <h1>{{ .Data.Note.Title }}</h1>
+  <p class="muted">Created {{ .Data.Note.CreatedAt.Format "Jan 2, 2006 15:04" }}</p>
+  <p class="note-body">{{ .Data.Note.Body }}</p>
+  <div class="actions">
+    <a class="btn" href="/notes/{{ .Data.Note.ID }}/edit">Edit</a>
+    <form method="post" action="/notes/{{ .Data.Note.ID }}" class="inline">
+      {{ csrfField .CSRFToken }}
+      <input type="hidden" name="_method" value="DELETE">
+      <button class="btn secondary" type="submit">Delete</button>
+    </form>
+    <a class="btn ghost" href="/notes">Back</a>
+  </div>
+</div>
+{{ end }}

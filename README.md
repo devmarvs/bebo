@@ -14,8 +14,11 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Method-not-allowed handling
 - Named routes + path/query helpers
 - Middleware chain (request ID, recovery, logging, CORS, body limit, timeout, auth, rate limiting)
+- Rate limiting (in-memory + Redis token bucket) with per-route policies
 - Security headers, IP allow/deny, CSRF protection
+- Security helpers: CSP builder, secure cookies, rotating JWT keys
 - Cookie-based sessions + memory/redis/postgres stores
+- Redis cache adapter
 - Flash messages (session-backed) + CSRF template helpers
 - Method override for HTML forms (PUT/PATCH/DELETE)
 - Compression (gzip) + response ETag + cache control
@@ -25,11 +28,14 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Static file helper with cache headers + ETag (disk or fs.FS)
 - Metrics registry + JSON handler + histogram buckets + Prometheus exporter
 - Tracing hooks middleware + optional OpenTelemetry adapter
+- Observability: structured access logs (trace/span IDs, request/response bytes) + auth-gated pprof endpoints
+- Request metadata propagation helpers (traceparent/request IDs)
 - Realtime (SSE/WebSocket) helpers
 - OpenAPI builder + JSON handler
 - HTTP client utilities (timeouts, retries, backoff, circuit breaker)
+- Background job runner (in-process queue, retries/backoff, dead-letter hooks)
 - Form/multipart binding + file upload helpers
-- Config defaults + env overrides + JSON config loader
+- Config defaults + env overrides + JSON config loader + layered profiles (base/env/secrets) with validation
 - Validation helpers (including struct tags, non-string fields, and custom validators)
 - Graceful shutdown helpers
 - Minimal CLI generator + migration commands
@@ -128,6 +134,42 @@ traceOpts.SkipPaths = []string{"/metrics"}
 app.Use(middleware.TraceWithOptions(traceOpts))
 ```
 
+## Rate Limiting (Redis + Policies)
+```go
+redisLimiter := middleware.NewRedisLimiter(5, 10, middleware.RedisLimiterOptions{Address: "127.0.0.1:6379"})
+policies, _ := middleware.NewRateLimitPolicies([]middleware.RateLimitPolicy{
+    {
+        Method: http.MethodGet,
+        Path:   "/reports/:id",
+        Allow: func(ctx *bebo.Context, key string) (bool, error) {
+            return redisLimiter.Allow(ctx.Request.Context(), key)
+        },
+    },
+})
+app.Use(policies.Middleware())
+```
+
+## Request Metadata Propagation
+```go
+app.Use(middleware.RequestID(), middleware.RequestContext())
+
+runner := tasks.New(tasks.DefaultOptions())
+runner.Start(context.Background())
+
+app.POST("/jobs", func(ctx *bebo.Context) error {
+    runner.Enqueue(tasks.Job{
+        Context: ctx.Request.Context(),
+        Handler: func(jobCtx context.Context) error {
+            logger := bebo.LoggerFromContext(jobCtx, slog.Default())
+            logger.Info("job started")
+            return nil
+        },
+    })
+    return ctx.Text(http.StatusAccepted, "queued")
+})
+```
+Use `bebo.InjectRequestMetadata` to copy headers to outgoing HTTP requests.
+
 ## CSRF
 ```go
 app.Use(middleware.CSRF(middleware.CSRFOptions{}))
@@ -137,6 +179,23 @@ app.POST("/submit", func(ctx *bebo.Context) error {
     _ = token
     return ctx.Text(http.StatusOK, "ok")
 })
+```
+
+## CSP Builder
+```go
+policy := security.NewCSP().
+    DefaultSrc("'self'").
+    ScriptSrc("'self'", "cdn.example.com").
+    UpgradeInsecureRequests()
+app.Use(middleware.SecurityHeaders(middleware.SecurityHeadersOptions{
+    ContentSecurityPolicy: policy.String(),
+}))
+```
+
+## Secure Cookies
+```go
+cookie := security.NewSecureCookie("session", "value", security.CookieOptions{})
+http.SetCookie(ctx.ResponseWriter, cookie)
 ```
 
 ## Method Override (HTML forms)
@@ -182,6 +241,15 @@ _ = pgStore.EnsureTable(context.Background())
 
 Note: Postgres requires a driver (pgx/pq) in your app.
 
+## Cache (Redis)
+```go
+store := cache.NewRedisStore(cache.RedisOptions{
+    Address:    "127.0.0.1:6379",
+    DefaultTTL: 5 * time.Minute,
+})
+_ = store.Set(context.Background(), "user:1", []byte("cached"), 0)
+```
+
 ## Metrics
 ```go
 registry := metrics.New()
@@ -193,6 +261,12 @@ app.GET("/metrics", func(ctx *bebo.Context) error {
 })
 ```
 Use `metrics.Handler(registry)` for JSON snapshots.
+
+## Pprof (Authenticated)
+```go
+authenticator := auth.JWTAuthenticator{Key: []byte("secret")}
+_ = pprof.Register(app, authenticator)
+```
 
 ## Health & Readiness
 ```go
@@ -228,6 +302,20 @@ client := httpclient.NewClient(httpclient.ClientOptions{
 })
 ```
 
+
+## Background Jobs
+```go
+runner := tasks.New(tasks.DefaultOptions())
+runner.Start(context.Background())
+
+_ = runner.Enqueue(tasks.Job{
+    Name:    "sync-users",
+    Context: context.Background(),
+    Handler: func(ctx context.Context) error {
+        return nil
+    },
+})
+```
 
 ## Realtime (SSE/WebSocket)
 ```go
@@ -288,6 +376,22 @@ authenticator := auth.JWTAuthenticator{
 }
 
 app.GET("/private", privateHandler, middleware.RequireAuth(authenticator))
+```
+
+Rotating keys:
+```go
+keys := auth.JWTKeySet{
+    Primary: auth.JWTKey{ID: "v2", Secret: []byte("new")},
+    Fallback: []auth.JWTKey{
+        {ID: "v1", Secret: []byte("old")},
+    },
+}
+
+// Use keys.Sign to mint tokens with the primary key.
+_ = keys
+
+rotating := auth.JWTAuthenticator{KeySet: &keys}
+app.GET("/private", privateHandler, middleware.RequireAuth(rotating))
 ```
 
 ## Request Binding
@@ -418,7 +522,34 @@ Load JSON config layered with env:
 ```go
 cfg, err := bebo.LoadConfig("config.json", "BEBO_")
 ```
+Load layered profiles (base + env + secrets) with validation:
+```go
+profile := bebo.ConfigProfile{
+    BasePath:    "config/base.json",
+    EnvPath:     "config/production.json",
+    SecretsPath: "config/secrets.json",
+    EnvPrefix:   "BEBO_",
+}
+cfg, err := bebo.LoadConfigProfile(profile)
+```
+Typed loaders are available via `config.Loader[T]` for custom config structs.
 Env keys include: `ADDRESS`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `TEMPLATES_DIR`, `LAYOUT_TEMPLATE`, `TEMPLATE_RELOAD`.
+
+## Versioning
+See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
+
+## Docs
+- Security: `SECURITY.md`
+- Hardening: `docs/hardening.md`
+- Secrets checklist: `docs/secrets.md`
+- Crypto/key rotation: `docs/crypto-keys.md`
+- Production runbook: `docs/runbook.md`
+- Scaling: `docs/scaling.md`
+- Timeouts & circuit breakers: `docs/timeouts.md`
+- Project structure: `docs/project-structure.md`
+- Migration guide: `docs/migration-guide.md`
+- Deployment examples: `deploy/docker/Dockerfile`, `deploy/k8s/`
+- CRUD app example: `examples/crud`
 
 ## CLI
 ```sh
@@ -429,10 +560,16 @@ bebo migrate new -dir ./migrations -name create_users
 bebo migrate plan -dir ./migrations
 ```
 
+## DB Helpers
+```go
+helper := db.Helper{Timeout: 2 * time.Second}
+_, _ = helper.Exec(context.Background(), dbConn, "SELECT 1")
+```
+
 ## Migrations
 ```go
 runner := migrate.New(db, "./migrations")
-runner.Locker = migrate.AdvisoryLocker{ID: 42}
+runner.Locker = migrate.AdvisoryLocker{ID: 42, Timeout: 5 * time.Second}
 _, _ = runner.Up(context.Background())
 ```
 Files use `0001_name.up.sql` and `0001_name.down.sql`.
@@ -443,10 +580,15 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `middleware/`: built-in middleware
 - `render/`: JSON and HTML rendering
 - `assets/`: cache-busting asset helper
+- `compat/`: backwards-compatibility tests
+- `cache/`: Redis cache adapter
+- `redis/`: shared Redis client
+- `security/`: CSP builder + secure cookies
 - `web/`: template helpers (csrf + flash)
-- `config/`: config defaults + env overrides + JSON loader
+- `config/`: config defaults + env overrides + JSON loader + profiles
 - `validate/`: basic validation helpers
 - `metrics/`: request metrics + Prometheus exporter
+- `pprof/`: authenticated pprof endpoints
 - `health/`: health and readiness checks
 - `session/`: cookie-backed sessions + memory store
 - `flash/`: flash messages
@@ -454,11 +596,14 @@ Files use `0001_name.up.sql` and `0001_name.down.sql`.
 - `openapi/`: OpenAPI builder + handler
 - `otel/`: OpenTelemetry adapter (build tag)
 - `httpclient/`: HTTP client utilities (retry/backoff/breaker)
+- `tasks/`: background jobs runner
 - `realtime/`: SSE + WebSocket helpers
 - `db/`: database helpers
 - `migrate/`: SQL migration runner
 - `desktop/`: Fyne helpers
-- `examples/`: API, web, and desktop samples
+- `docs/`: security, runbooks, and guides
+- `deploy/`: container and Kubernetes examples
+- `examples/`: API, web, desktop, and CRUD samples
 
 ## Roadmap
 See `ROADMAP.md`.

@@ -1,0 +1,12 @@
+{{ define "flash" }}
+  {{ if .Flash }}
+  <div class="flash-stack">
+    {{ range .Flash }}
+    <div class="flash flash-{{ .Type }}">{{ .Text }}</div>
+    {{ end }}
+  </div>
+  {{ end }}
+  {{ if .Data.Error }}
+  <div class="flash flash-error">{{ .Data.Error }}</div>
+  {{ end }}
+{{ end }}

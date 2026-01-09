@@ -33,6 +33,7 @@ type RetryPolicy struct {
 type Job struct {
 	Name         string
 	Handler      Handler
+	Context      context.Context
 	Retry        *RetryPolicy
 	Timeout      time.Duration
 	OnRetry      func(RetryInfo)
@@ -218,15 +219,20 @@ func (r *Runner) runJob(ctx context.Context, job Job) {
 		onDeadLetter = r.opts.onDeadLetter
 	}
 
+	baseCtx := ctx
+	if job.Context != nil {
+		baseCtx = job.Context
+	}
+
 	attempts := 0
 	retries := 0
 	for {
 		attempts++
 
-		runCtx := ctx
+		runCtx := baseCtx
 		cancel := func() {}
 		if timeout > 0 {
-			runCtx, cancel = context.WithTimeout(ctx, timeout)
+			runCtx, cancel = context.WithTimeout(baseCtx, timeout)
 		}
 		err := job.Handler(runCtx)
 		cancel()
@@ -254,7 +260,7 @@ func (r *Runner) runJob(ctx context.Context, job Job) {
 		}
 
 		if delay > 0 {
-			if err := sleepWithContext(ctx, delay, r.opts.sleep); err != nil {
+			if err := sleepWithContext(baseCtx, delay, r.opts.sleep); err != nil {
 				if onDeadLetter != nil {
 					onDeadLetter(DeadLetter{Name: job.Name, Attempts: attempts, Err: err})
 				}

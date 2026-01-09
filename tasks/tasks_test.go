@@ -115,3 +115,37 @@ func TestEnqueueGuards(t *testing.T) {
 		t.Fatalf("expected closed error, got %v", err)
 	}
 }
+
+func TestRunnerUsesJobContext(t *testing.T) {
+	runner := New(Options{QueueSize: 1})
+	runner.Start(context.Background())
+
+	ctx := context.WithValue(context.Background(), "trace", "value")
+	done := make(chan struct{})
+	job := Job{
+		Context: ctx,
+		Handler: func(ctx context.Context) error {
+			if ctx.Value("trace") != "value" {
+				return errors.New("missing context value")
+			}
+			close(done)
+			return nil
+		},
+	}
+
+	if err := runner.Enqueue(job); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("job did not run")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runner.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}

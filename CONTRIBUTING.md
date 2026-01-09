@@ -10,6 +10,7 @@ Thanks for contributing to bebo.
 - Keep diffs small and focused
 - Add tests for new behavior or bug fixes
 - Update docs when behavior changes
+- Update `CHANGELOG.md` for user-facing changes
 
 ## Coding Style
 - Keep functions small and explicit

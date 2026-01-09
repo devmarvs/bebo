@@ -139,7 +139,7 @@ func (c *Context) Get(key string) (any, bool) {
 
 // Logger returns the app logger.
 func (c *Context) Logger() Logger {
-	return Logger{logger: c.app.logger, requestID: RequestIDFromHeader(c.Request)}
+	return LoggerFromRequest(c.Request, c.app.logger)
 }
 
 // JSON responds with JSON.
