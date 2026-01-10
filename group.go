@@ -38,6 +38,10 @@ func (g *Group) GET(path string, handler Handler, middleware ...Middleware) {
 	g.handle("GET", path, handler, middleware)
 }
 
+func (g *Group) HEAD(path string, handler Handler, middleware ...Middleware) {
+	g.handle("HEAD", path, handler, middleware)
+}
+
 // POST registers a POST route in the group.
 func (g *Group) POST(path string, handler Handler, middleware ...Middleware) {
 	g.handle("POST", path, handler, middleware)

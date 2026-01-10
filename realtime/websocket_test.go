@@ -37,9 +37,10 @@ func TestConnReadWrite(t *testing.T) {
 		t.Fatalf("expected payload %q, got %q", "hello", string(payload))
 	}
 
-	if err := conn.WriteText("pong"); err != nil {
-		t.Fatalf("write text: %v", err)
-	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- conn.WriteText("pong")
+	}()
 
 	frame := make([]byte, 2+4)
 	if _, err := io.ReadFull(client, frame[:2]); err != nil {
@@ -55,6 +56,11 @@ func TestConnReadWrite(t *testing.T) {
 	}
 	if string(payloadBuf) != "pong" {
 		t.Fatalf("expected payload %q, got %q", "pong", string(payloadBuf))
+	}
+
+	err = <-errCh
+	if err != nil {
+		t.Fatalf("write text: %v", err)
 	}
 }
 

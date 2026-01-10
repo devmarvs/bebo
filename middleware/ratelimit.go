@@ -151,7 +151,7 @@ func RateLimit(limiter *Limiter, options ...RateLimitOption) bebo.Middleware {
 
 // RateLimitWith enforces a rate limit using a custom allow function.
 func RateLimitWith(allow AllowFunc, options ...RateLimitOption) bebo.Middleware {
-	cfg := rateLimitConfig{keyFunc: clientIP, retryAfter: 0}
+	cfg := rateLimitConfig{keyFunc: clientIPKey, retryAfter: 0}
 	for _, opt := range options {
 		opt(&cfg)
 	}
@@ -166,6 +166,9 @@ func RateLimitWith(allow AllowFunc, options ...RateLimitOption) bebo.Middleware 
 func applyRateLimit(ctx *bebo.Context, allow AllowFunc, cfg rateLimitConfig, next bebo.Handler) error {
 	if allow == nil {
 		return apperr.Internal("rate limiter not configured", nil)
+	}
+	if next == nil {
+		next = func(*bebo.Context) error { return nil }
 	}
 
 	key := cfg.keyFunc(ctx)
@@ -200,7 +203,7 @@ func applyRateLimit(ctx *bebo.Context, allow AllowFunc, cfg rateLimitConfig, nex
 	return next(ctx)
 }
 
-func clientIP(ctx *bebo.Context) string {
+func clientIPKey(ctx *bebo.Context) string {
 	ip := ctx.Request.Header.Get("X-Forwarded-For")
 	if ip != "" {
 		parts := strings.Split(ip, ",")

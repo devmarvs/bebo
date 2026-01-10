@@ -4,6 +4,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -35,7 +36,9 @@ func Run(cfg WindowConfig) {
 		w.SetMainMenu(cfg.Menu)
 	}
 	if cfg.TrayMenu != nil {
-		a.SetSystemTrayMenu(cfg.TrayMenu)
+		if desktopApp, ok := a.(desktop.App); ok {
+			desktopApp.SetSystemTrayMenu(cfg.TrayMenu)
+		}
 	}
 	if cfg.OnClose != nil {
 		w.SetCloseIntercept(func() {

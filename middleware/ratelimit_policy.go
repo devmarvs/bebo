@@ -52,7 +52,7 @@ func NewRateLimitPolicies(policies []RateLimitPolicy) (*RateLimitPolicies, error
 
 // Middleware returns a middleware that enforces the policies.
 func (p *RateLimitPolicies) Middleware(options ...RateLimitOption) bebo.Middleware {
-	cfg := rateLimitConfig{keyFunc: clientIP, retryAfter: 0}
+	cfg := rateLimitConfig{keyFunc: clientIPKey, retryAfter: 0}
 	for _, opt := range options {
 		opt(&cfg)
 	}

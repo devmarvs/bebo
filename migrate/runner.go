@@ -352,3 +352,32 @@ func (r *Runner) apply(ctx context.Context, migration Migration, up bool) error 
 
 	return tx.Commit()
 }
+
+func tryAdvisoryLock(ctx context.Context, db *sql.DB, id int64) (bool, error) {
+	row := db.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", id)
+	var locked bool
+	if err := row.Scan(&locked); err != nil {
+		return false, err
+	}
+	return locked, nil
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	if ctx == nil {
+		time.Sleep(delay)
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

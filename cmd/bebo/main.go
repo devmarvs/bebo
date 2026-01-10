@@ -462,7 +462,6 @@ func homeTemplate() string {
 `
 }
 
-
 func configBaseTemplate() string {
 	return `{
   "Address": ":8080",
@@ -814,18 +813,18 @@ func Test%sRoutes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req, err := http.NewRequest(tc.method, server.URL+tc.path, nil)
 			if err != nil {
-				t.Fatalf("request: %v", err)
+				t.Fatalf("request: %%v", err)
 			}
 			req.Header.Set("Accept", "application/json")
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				t.Fatalf("do: %v", err)
+				t.Fatalf("do: %%v", err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != tc.status {
-				t.Fatalf("expected status %d, got %d", tc.status, resp.StatusCode)
+				t.Fatalf("expected status %%d, got %%d", tc.status, resp.StatusCode)
 			}
 		})
 	}

@@ -4,20 +4,20 @@ import "time"
 
 // Config holds app configuration.
 type Config struct {
-	Address           string
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	ReadHeaderTimeout time.Duration
-	ShutdownTimeout   time.Duration
-	MaxHeaderBytes    int
+	Address           string        `json:"address"`
+	ReadTimeout       time.Duration `json:"read_timeout"`
+	WriteTimeout      time.Duration `json:"write_timeout"`
+	IdleTimeout       time.Duration `json:"idle_timeout"`
+	ReadHeaderTimeout time.Duration `json:"read_header_timeout"`
+	ShutdownTimeout   time.Duration `json:"shutdown_timeout"`
+	MaxHeaderBytes    int           `json:"max_header_bytes"`
 
-	TemplatesDir   string
-	LayoutTemplate string
-	TemplateReload bool
+	TemplatesDir   string `json:"templates_dir"`
+	LayoutTemplate string `json:"layout_template"`
+	TemplateReload bool   `json:"template_reload"`
 
-	LogLevel  string
-	LogFormat string
+	LogLevel  string `json:"log_level"`
+	LogFormat string `json:"log_format"`
 }
 
 // Default returns safe defaults.

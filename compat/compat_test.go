@@ -15,9 +15,9 @@ func TestNamedRoutesCompatibility(t *testing.T) {
 	app := bebo.New()
 	app.Route("GET", "/users/:id", func(*bebo.Context) error { return nil }, bebo.WithName("user.show"))
 
-	path, err := app.Path("user.show", map[string]string{"id": "42"})
-	if err != nil {
-		t.Fatalf("path: %v", err)
+	path, ok := app.Path("user.show", map[string]string{"id": "42"})
+	if !ok {
+		t.Fatalf("expected named route path")
 	}
 	if path != "/users/42" {
 		t.Fatalf("expected path /users/42, got %q", path)

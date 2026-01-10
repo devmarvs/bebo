@@ -240,7 +240,6 @@ func WithErrorTemplates(templates map[int]string) Option {
 	}
 }
 
-
 // WithRegistry sets a custom registry for extensibility.
 func WithRegistry(registry *Registry) Option {
 	return func(app *App) {
@@ -295,6 +294,10 @@ func (a *App) Route(method, path string, handler Handler, options ...RouteOption
 // GET registers a GET route.
 func (a *App) GET(path string, handler Handler, middleware ...Middleware) {
 	a.handleWithOptions(http.MethodGet, path, handler, middleware)
+}
+
+func (a *App) HEAD(path string, handler Handler, middleware ...Middleware) {
+	a.handleWithOptions(http.MethodHead, path, handler, middleware)
 }
 
 // POST registers a POST route.
@@ -572,7 +575,8 @@ func defaultErrorHandler(ctx *Context, err error) {
 
 	if ctx.app != nil && ctx.app.renderer != nil {
 		if name, ok := errorTemplateName(ctx.app.errorTemplates, status); ok {
-			if renderErr := ctx.app.renderer.Render(ctx.ResponseWriter, status, name, data); renderErr == nil {
+			renderErr := ctx.app.renderer.Render(ctx.ResponseWriter, status, name, data)
+			if renderErr == nil {
 				return
 			}
 			ctx.Logger().Error("error template render failed", slog.Int("status", status), slog.String("error", renderErr.Error()))

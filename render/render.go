@@ -287,6 +287,95 @@ func findTemplateFiles(dir string, recursive bool) ([]string, error) {
 	return entries, nil
 }
 
+func findTemplateFilesFS(fsys fs.FS, dir string, recursive bool) ([]string, error) {
+	root := dir
+	if root == "" {
+		root = "."
+	}
+
+	if !recursive {
+		pattern := path.Join(dir, "*.html")
+		if dir == "" {
+			pattern = "*.html"
+		}
+		entries, err := fs.Glob(fsys, pattern)
+		if err != nil {
+			return nil, err
+		}
+		sort.Strings(entries)
+		return entries, nil
+	}
+
+	var entries []string
+	err := fs.WalkDir(fsys, root, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".html") {
+			entries = append(entries, filePath)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if root == "." {
+		for i, entry := range entries {
+			entries[i] = strings.TrimPrefix(entry, "./")
+		}
+	}
+	if len(entries) == 0 {
+		return entries, nil
+	}
+	sort.Strings(entries)
+	return entries, nil
+}
+
+func classifyTemplatesFS(dir string, files []string, layoutPath string, patterns []string) ([]string, []string, error) {
+	var pages []string
+	var partials []string
+	layoutPath = path.Clean(layoutPath)
+
+	for _, file := range files {
+		clean := path.Clean(file)
+		if layoutPath != "" && clean == layoutPath {
+			continue
+		}
+		name, err := templateNameFS(dir, clean)
+		if err != nil {
+			return nil, nil, err
+		}
+		if isPartial(name, patterns) {
+			partials = append(partials, clean)
+			continue
+		}
+		pages = append(pages, clean)
+	}
+
+	sort.Strings(pages)
+	sort.Strings(partials)
+	return pages, partials, nil
+}
+
+func templateNameFS(dir, file string) (string, error) {
+	clean := path.Clean(file)
+	if dir == "" || dir == "." {
+		return strings.TrimPrefix(clean, "./"), nil
+	}
+	base := path.Clean(dir)
+	if base == "." {
+		return strings.TrimPrefix(clean, "./"), nil
+	}
+	prefix := strings.TrimSuffix(base, "/") + "/"
+	if strings.HasPrefix(clean, prefix) {
+		return strings.TrimPrefix(clean, prefix), nil
+	}
+	return "", fmt.Errorf("template path %s is outside %s", clean, base)
+}
+
 func classifyTemplates(dir string, files []string, layoutPath string, patterns []string) ([]string, []string, error) {
 	var pages []string
 	var partials []string
@@ -385,6 +474,56 @@ func globToRegex(pattern string) (*regexp.Regexp, error) {
 
 	builder.WriteString("$")
 	return regexp.Compile(builder.String())
+}
+
+func parseTemplateSetFS(fsys fs.FS, dir, layoutPath, pagePath string, partials []string, funcs FuncMap) (*template.Template, error) {
+	pageName, err := templateNameFS(dir, pagePath)
+	if err != nil {
+		return nil, err
+	}
+
+	layoutName := ""
+	if layoutPath != "" {
+		layoutName, err = templateNameFS(dir, layoutPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	baseName := pageName
+	if layoutName != "" {
+		baseName = layoutName
+	}
+
+	base := template.New(baseName)
+	if funcs != nil {
+		base = base.Funcs(template.FuncMap(funcs))
+	}
+
+	if layoutPath != "" {
+		if err := parseTemplateFileFS(fsys, base, layoutPath, baseName); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, partial := range partials {
+		name, err := templateNameFS(dir, partial)
+		if err != nil {
+			return nil, err
+		}
+		if name == baseName {
+			continue
+		}
+		if err := parseTemplateFileFS(fsys, base, partial, name); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := parseTemplateFileFS(fsys, base, pagePath, pageName); err != nil {
+		return nil, err
+	}
+
+	return base, nil
 }
 
 func parseTemplateSet(dir, layoutPath, pagePath string, partials []string, funcs FuncMap) (*template.Template, error) {

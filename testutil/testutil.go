@@ -63,6 +63,9 @@ func RunMiddleware(t *testing.T, middleware []bebo.Middleware, handler bebo.Hand
 	ctx := bebo.NewContext(rec, req, router.Params{}, app)
 
 	h := handler
+	if h == nil {
+		h = func(*bebo.Context) error { return nil }
+	}
 	for i := len(middleware) - 1; i >= 0; i-- {
 		h = middleware[i](h)
 	}
