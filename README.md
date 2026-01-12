@@ -543,6 +543,7 @@ See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
 ## Docs
 - Security: `SECURITY.md`
 - Hardening: `docs/hardening.md`
+- Authentication defaults: `docs/authentication.md`
 - Secrets checklist: `docs/secrets.md`
 - Crypto/key rotation: `docs/crypto-keys.md`
 - Production runbook: `docs/runbook.md`
@@ -552,23 +553,37 @@ See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
 - Extensibility: `docs/extensibility.md`
 - Integrations: `docs/integrations.md`
 - Project structure: `docs/project-structure.md`
+- Scaffolding upgrades: `docs/scaffolding-upgrades.md`
 - Migration guide: `docs/migration-guide.md`
 - Deployment examples: `deploy/docker/Dockerfile`, `deploy/k8s/`
 - CRUD app example: `examples/crud`
 
 ## CLI
 ```sh
-bebo new ./myapp -module github.com/me/myapp -template -profile
+bebo new ./myapp -module github.com/me/myapp -web -template -profile
 bebo route add -method GET -path /users/:id -name user.show
 bebo crud new users -dir handlers -package handlers -templates templates
 bebo migrate new -dir ./migrations -name create_users
 bebo migrate plan -dir ./migrations
 ```
+Supports `-api`, `-web`, and `-desktop` scaffolds.
+
 
 ## DB Helpers
 ```go
 helper := db.Helper{Timeout: 2 * time.Second}
 _, _ = helper.Exec(context.Background(), dbConn, "SELECT 1")
+
+repo := db.NewRepository(dbConn, 2*time.Second)
+limit, offset := db.Pagination{Page: 1, Size: 25}.LimitOffset()
+query, args, _ := db.Select("id", "name").From("users").Where("active = ?", true).Build()
+_ = limit
+_ = offset
+_ = query
+_ = args
+
+logged := db.WithQueryHook(dbConn, func(ctx context.Context, q string, args []any, d time.Duration, err error) {})
+_ = logged
 ```
 
 ## Migrations

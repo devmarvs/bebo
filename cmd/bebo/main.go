@@ -39,7 +39,7 @@ func main() {
 func usage() {
 	fmt.Println("bebo CLI")
 	fmt.Println("\nCommands:")
-	fmt.Println("  bebo new <dir> -module <module> [-version v0.0.0] [-template] [-profile]")
+	fmt.Println("  bebo new <dir> -module <module> [-version v0.0.0] [-api|-web|-desktop] [-template] [-profile]")
 	fmt.Println("  bebo route add -method GET -path /users/:id [-name user.show]")
 	fmt.Println("  bebo crud new <resource> [-dir handlers] [-package handlers] [-templates templates] [-tests=true]")
 	fmt.Println("  bebo migrate new -dir ./migrations -name create_users")
@@ -54,11 +54,23 @@ func newCmd(args []string) {
 	version := fs.String("version", "v0.0.0", "bebo version for go.mod")
 	template := fs.Bool("template", false, "include templates")
 	profile := fs.Bool("profile", false, "include config profiles")
+	api := fs.Bool("api", false, "scaffold an API-only service")
+	web := fs.Bool("web", false, "scaffold a server-rendered web app")
+	desktop := fs.Bool("desktop", false, "scaffold a desktop app (Fyne)")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 || *module == "" {
-		fmt.Println("usage: bebo new <dir> -module <module> [-version v0.0.0] [-template] [-profile]")
+		fmt.Println("usage: bebo new <dir> -module <module> [-version v0.0.0] [-api|-web|-desktop] [-template] [-profile]")
 		return
+	}
+
+	kind, err := resolveProjectKind(*api, *web, *desktop)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	if kind == projectWeb {
+		*template = true
 	}
 
 	dir := fs.Arg(0)
@@ -69,10 +81,13 @@ func newCmd(args []string) {
 	if err := writeFile(filepath.Join(dir, "go.mod"), goMod(*module, *version)); err != nil {
 		fatal(err)
 	}
-	if err := writeFile(filepath.Join(dir, "main.go"), mainGo(*module, *profile)); err != nil {
+	if err := writeFile(filepath.Join(dir, "main.go"), mainGo(kind, *module, *profile)); err != nil {
 		fatal(err)
 	}
 	if err := writeFile(filepath.Join(dir, "README.md"), readme(*module)); err != nil {
+		fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "bebo.manifest.json"), templateManifest(*module, *version, kind)); err != nil {
 		fatal(err)
 	}
 
@@ -94,10 +109,10 @@ func newCmd(args []string) {
 		if err := os.MkdirAll(configDir, 0o755); err != nil {
 			fatal(err)
 		}
-		if err := writeFile(filepath.Join(configDir, "base.json"), configBaseTemplate()); err != nil {
+		if err := writeFile(filepath.Join(configDir, "base.json"), configBaseTemplate(kind == projectWeb)); err != nil {
 			fatal(err)
 		}
-		if err := writeFile(filepath.Join(configDir, "development.json"), configEnvTemplate()); err != nil {
+		if err := writeFile(filepath.Join(configDir, "development.json"), configEnvTemplate(kind == projectWeb)); err != nil {
 			fatal(err)
 		}
 		if err := writeFile(filepath.Join(configDir, "secrets.example.json"), configSecretsTemplate()); err != nil {
@@ -370,8 +385,19 @@ func goMod(module, version string) string {
 	return fmt.Sprintf("module %s\n\ngo 1.25\n\nrequire github.com/devmarvs/bebo %s\n", module, version)
 }
 
-func mainGo(module string, withProfile bool) string {
+func mainGo(kind, module string, withProfile bool) string {
 	_ = module
+	switch kind {
+	case projectWeb:
+		return mainGoWeb(withProfile)
+	case projectDesktop:
+		return mainGoDesktop()
+	default:
+		return mainGoAPI(withProfile)
+	}
+}
+
+func mainGoAPI(withProfile bool) string {
 	if withProfile {
 		return `package main
 
@@ -436,6 +462,106 @@ func main() {
 `
 }
 
+func mainGoWeb(withProfile bool) string {
+	if withProfile {
+		return `package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/devmarvs/bebo"
+	"github.com/devmarvs/bebo/config"
+	"github.com/devmarvs/bebo/middleware"
+	"github.com/devmarvs/bebo/web"
+)
+
+func main() {
+	profile := config.Profile{
+		BasePath:     "config/base.json",
+		EnvPath:      "config/development.json",
+		SecretsPath:  "config/secrets.json",
+		EnvPrefix:    "BEBO_",
+		AllowMissing: true,
+	}
+	cfg, err := config.LoadProfile(profile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app := bebo.New(
+		bebo.WithConfig(cfg),
+		bebo.WithTemplateFuncs(web.Funcs()),
+	)
+	app.Use(middleware.RequestID(), middleware.Recover(), middleware.Logger(), middleware.CSRF(middleware.CSRFOptions{}))
+
+	app.GET("/", func(ctx *bebo.Context) error {
+		view := map[string]string{"Title": "Welcome"}
+		return ctx.HTML(http.StatusOK, "home.html", view)
+	})
+
+	if err := app.RunWithSignals(); err != nil {
+		log.Fatal(err)
+	}
+}
+`
+	}
+
+	return `package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/devmarvs/bebo"
+	"github.com/devmarvs/bebo/middleware"
+	"github.com/devmarvs/bebo/web"
+)
+
+func main() {
+	cfg := bebo.DefaultConfig()
+	cfg.TemplatesDir = "templates"
+	cfg.LayoutTemplate = "layout.html"
+	cfg.TemplateReload = true
+
+	app := bebo.New(
+		bebo.WithConfig(cfg),
+		bebo.WithTemplateFuncs(web.Funcs()),
+	)
+	app.Use(middleware.RequestID(), middleware.Recover(), middleware.Logger(), middleware.CSRF(middleware.CSRFOptions{}))
+
+	app.GET("/", func(ctx *bebo.Context) error {
+		view := map[string]string{"Title": "Welcome"}
+		return ctx.HTML(http.StatusOK, "home.html", view)
+	})
+
+	if err := app.RunWithSignals(); err != nil {
+		log.Fatal(err)
+	}
+}
+`
+}
+
+func mainGoDesktop() string {
+	return `package main
+
+import (
+	"github.com/devmarvs/bebo/desktop"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+)
+
+func main() {
+	desktop.Run(desktop.WindowConfig{
+		Title:  "bebo desktop",
+		Width:  900,
+		Height: 600,
+		Body:   container.NewCenter(widget.NewLabel("Hello from bebo")),
+	})
+}
+`
+}
+
 func readme(module string) string {
 	return fmt.Sprintf("# %s\n", module)
 }
@@ -462,7 +588,14 @@ func homeTemplate() string {
 `
 }
 
-func configBaseTemplate() string {
+func configBaseTemplate(withTemplates bool) string {
+	templatesBlock := ""
+	if withTemplates {
+		templatesBlock = `  "TemplatesDir": "templates",
+  "LayoutTemplate": "layout.html",
+  "TemplateReload": false,
+`
+	}
 	return `{
   "Address": ":8080",
   "ReadTimeout": "10s",
@@ -471,21 +604,66 @@ func configBaseTemplate() string {
   "ReadHeaderTimeout": "5s",
   "ShutdownTimeout": "10s",
   "MaxHeaderBytes": 1048576,
-  "TemplatesDir": "templates",
-  "LayoutTemplate": "layout.html",
-  "TemplateReload": false,
-  "LogLevel": "info",
+` + templatesBlock + `  "LogLevel": "info",
   "LogFormat": "text"
 }
 `
 }
 
-func configEnvTemplate() string {
+func configEnvTemplate(withTemplates bool) string {
+	templatesBlock := ""
+	if withTemplates {
+		templatesBlock = `  "TemplateReload": true,
+`
+	}
 	return `{
-  "TemplateReload": true,
-  "LogLevel": "debug"
+` + templatesBlock + `  "LogLevel": "debug"
 }
 `
+}
+
+func templateManifest(module, version, kind string) string {
+	return fmt.Sprintf(`{
+  "schema_version": 1,
+  "template_version": %q,
+  "bebo_version": %q,
+  "module": %q,
+  "kind": %q,
+  "generated_at": %q
+}
+`, version, version, module, kind, time.Now().UTC().Format(time.RFC3339))
+}
+
+const (
+	projectAPI     = "api"
+	projectWeb     = "web"
+	projectDesktop = "desktop"
+)
+
+func resolveProjectKind(api, web, desktop bool) (string, error) {
+	count := 0
+	if api {
+		count++
+	}
+	if web {
+		count++
+	}
+	if desktop {
+		count++
+	}
+	if count > 1 {
+		return "", errors.New("choose only one of -api, -web, or -desktop")
+	}
+	if api {
+		return projectAPI, nil
+	}
+	if web {
+		return projectWeb, nil
+	}
+	if desktop {
+		return projectDesktop, nil
+	}
+	return projectAPI, nil
 }
 
 func configSecretsTemplate() string {

@@ -35,7 +35,9 @@ deploy/
 
 ## CLI scaffolding
 ```sh
-bebo new ./myapp -module github.com/me/myapp -template
+bebo new ./myapp -module github.com/me/myapp -web -template
 bebo crud new users -dir internal/handlers -package handlers -templates templates
 bebo migrate new -dir ./migrations -name create_users
 ```
+
+The generator writes `bebo.manifest.json` with the template version and project kind.
