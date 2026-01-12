@@ -1,4 +1,4 @@
-# CRUD example
+# CRUD example (real app)
 
 This example demonstrates CRUD routes, sessions, form auth, and migrations.
 
@@ -26,3 +26,6 @@ go run ./examples/crud
 - Web: /signup, /login, /notes
 - API: /api/notes
 - Health: /health, /ready
+
+## Production runbook
+See `examples/crud/RUNBOOK.md`.

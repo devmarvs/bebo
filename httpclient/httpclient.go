@@ -311,11 +311,12 @@ func DefaultBreakerDecider(req *http.Request, resp *http.Response, err error) bo
 
 // ClientOptions configures a default HTTP client.
 type ClientOptions struct {
-	Timeout    time.Duration
-	Transport  http.RoundTripper
-	Retry      RetryOptions
-	Breaker    *CircuitBreaker
-	ShouldTrip BreakerDecider
+	Timeout           time.Duration
+	Transport         http.RoundTripper
+	Retry             RetryOptions
+	Breaker           *CircuitBreaker
+	ShouldTrip        BreakerDecider
+	PropagateMetadata bool
 }
 
 // DefaultClientOptions returns a baseline client configuration.
@@ -335,6 +336,9 @@ func NewClient(options ClientOptions) *http.Client {
 	}
 	if options.Breaker != nil {
 		transport = &BreakerRoundTripper{Base: transport, Breaker: options.Breaker, ShouldTrip: options.ShouldTrip}
+	}
+	if options.PropagateMetadata {
+		transport = &MetadataRoundTripper{Base: transport}
 	}
 
 	return &http.Client{

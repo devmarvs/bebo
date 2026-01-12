@@ -2,6 +2,7 @@
 
 ## Pre-deploy checklist
 - Configure BEBO_ environment overrides (timeouts, address, templates).
+- Review the CRUD example runbook: `examples/crud/RUNBOOK.md`.
 - Set session, JWT, and database secrets from a secret manager.
 - Run migrations and verify the plan before deploying.
 
@@ -19,6 +20,7 @@
 
 ## Observability
 - Emit structured logs with request IDs and trace IDs.
+- Configure log/trace sampling for high-traffic endpoints.
 - Export metrics and traces to your monitoring stack.
 - Gate pprof endpoints behind auth and IP allowlists.
 

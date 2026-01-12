@@ -25,6 +25,9 @@ func RequestID() bebo.Middleware {
 			}
 			if requestID != "" {
 				ctx.ResponseWriter.Header().Set(bebo.RequestIDHeader, requestID)
+				metadata := bebo.RequestMetadataFromRequest(ctx.Request)
+				metadata.RequestID = requestID
+				ctx.Request = ctx.Request.WithContext(bebo.WithRequestMetadata(ctx.Request.Context(), metadata))
 			}
 			return next(ctx)
 		}
@@ -61,13 +64,16 @@ type LoggerOptions struct {
 	Message    string
 	SkipPaths  []string
 	ErrorLevel bool
+	Sampler    Sampler
+	SampleRate float64
 }
 
 // DefaultLoggerOptions returns default logging options.
 func DefaultLoggerOptions() LoggerOptions {
 	return LoggerOptions{
-		Fields:  DefaultLogFields(),
-		Message: "request completed",
+		Fields:     DefaultLogFields(),
+		Message:    "request completed",
+		SampleRate: 1,
 	}
 }
 
@@ -105,12 +111,21 @@ func LoggerWithOptions(options LoggerOptions) bebo.Middleware {
 				attrs = append(attrs, field(ctx, recorder, duration))
 			}
 
-			if options.ErrorLevel && (err != nil || status >= http.StatusInternalServerError) {
+			shouldLog := true
+			if options.Sampler != nil {
+				shouldLog = options.Sampler(ctx)
+			}
+			if !shouldLog && (err != nil || status >= http.StatusInternalServerError) {
+				shouldLog = true
+			}
+
+			if shouldLog && options.ErrorLevel && (err != nil || status >= http.StatusInternalServerError) {
 				ctx.Logger().Error(options.Message, attrs...)
 				return err
 			}
-
-			ctx.Logger().Info(options.Message, attrs...)
+			if shouldLog {
+				ctx.Logger().Info(options.Message, attrs...)
+			}
 			return err
 		}
 	}
@@ -122,6 +137,12 @@ func normalizeLoggerOptions(options LoggerOptions) LoggerOptions {
 	}
 	if options.Message == "" {
 		options.Message = "request completed"
+	}
+	if options.Sampler == nil {
+		if options.SampleRate == 0 {
+			options.SampleRate = 1
+		}
+		options.Sampler = SampleRate(options.SampleRate)
 	}
 	return options
 }

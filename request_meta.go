@@ -75,6 +75,25 @@ func InjectRequestMetadata(r *http.Request, metadata RequestMetadata) {
 	}
 }
 
+// InjectRequestMetadataIfMissing sets request metadata headers only when missing.
+func InjectRequestMetadataIfMissing(r *http.Request, metadata RequestMetadata) {
+	if r == nil {
+		return
+	}
+	if r.Header == nil {
+		r.Header = make(http.Header)
+	}
+	if metadata.RequestID != "" && r.Header.Get(RequestIDHeader) == "" {
+		r.Header.Set(RequestIDHeader, metadata.RequestID)
+	}
+	if metadata.Traceparent != "" && r.Header.Get(TraceparentHeader) == "" {
+		r.Header.Set(TraceparentHeader, metadata.Traceparent)
+	}
+	if metadata.Tracestate != "" && r.Header.Get(TracestateHeader) == "" {
+		r.Header.Set(TracestateHeader, metadata.Tracestate)
+	}
+}
+
 // TraceIDs parses trace and span ids from traceparent.
 func TraceIDs(traceparent string) (string, string, bool) {
 	if traceparent == "" {

@@ -125,6 +125,7 @@ app.GET("/reports", reportsHandler, middleware.RateLimit(limiter))
 ```go
 logOpts := middleware.DefaultLoggerOptions()
 logOpts.SkipPaths = []string{"/health"}
+logOpts.SampleRate = 0.2
 app.Use(middleware.LoggerWithOptions(logOpts))
 
 metricsOpts := middleware.DefaultMetricsOptions(registry)
@@ -133,6 +134,7 @@ app.Use(middleware.MetricsWithOptions(metricsOpts))
 
 traceOpts := middleware.DefaultTraceOptions(tracer)
 traceOpts.SkipPaths = []string{"/metrics"}
+traceOpts.SampleRate = 0.2
 app.Use(middleware.TraceWithOptions(traceOpts))
 ```
 
@@ -170,7 +172,15 @@ app.POST("/jobs", func(ctx *bebo.Context) error {
     return ctx.Text(http.StatusAccepted, "queued")
 })
 ```
-Use `bebo.InjectRequestMetadata` to copy headers to outgoing HTTP requests.
+Use `bebo.InjectRequestMetadata` to copy headers to outgoing HTTP requests, or enable client propagation:
+```go
+client := httpclient.NewClient(httpclient.ClientOptions{
+    Timeout:           10 * time.Second,
+    Retry:             httpclient.DefaultRetryOptions(),
+    PropagateMetadata: true,
+})
+_ = client
+```
 
 ## CSRF
 ```go
@@ -257,6 +267,9 @@ _ = store.Set(context.Background(), "user:1", []byte("cached"), 0)
 registry := metrics.New()
 app.Use(middleware.Metrics(registry))
 
+custom := metrics.NewWithBuckets([]time.Duration{5 * time.Millisecond, 25 * time.Millisecond, 100 * time.Millisecond, 500 * time.Millisecond, time.Second})
+_ = custom
+
 app.GET("/metrics", func(ctx *bebo.Context) error {
     metrics.PrometheusHandler(registry).ServeHTTP(ctx.ResponseWriter, ctx.Request)
     return nil
@@ -298,9 +311,10 @@ breaker := httpclient.NewCircuitBreaker(httpclient.CircuitBreakerOptions{
 })
 
 client := httpclient.NewClient(httpclient.ClientOptions{
-    Timeout: 10 * time.Second,
-    Retry:   httpclient.DefaultRetryOptions(),
-    Breaker: breaker,
+    Timeout:           10 * time.Second,
+    Retry:             httpclient.DefaultRetryOptions(),
+    Breaker:           breaker,
+    PropagateMetadata: true,
 })
 ```
 
@@ -554,9 +568,10 @@ See `VERSIONING.md`, `DEPRECATION.md`, and `CHANGELOG.md`.
 - Integrations: `docs/integrations.md`
 - Project structure: `docs/project-structure.md`
 - Scaffolding upgrades: `docs/scaffolding-upgrades.md`
+- Testing: `docs/testing.md`
 - Migration guide: `docs/migration-guide.md`
 - Deployment examples: `deploy/docker/Dockerfile`, `deploy/k8s/`
-- CRUD app example: `examples/crud`
+- CRUD app example: `examples/crud` (runbook: `examples/crud/RUNBOOK.md`)
 
 ## CLI
 ```sh

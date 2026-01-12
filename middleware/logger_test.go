@@ -89,3 +89,51 @@ func TestLoggerOptionsSkipPath(t *testing.T) {
 		t.Fatalf("expected no logs for skipped path")
 	}
 }
+
+func TestLoggerSampling(t *testing.T) {
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+
+	app := bebo.New(
+		bebo.WithLogger(logger),
+		bebo.WithErrorHandler(func(*bebo.Context, error) {}),
+	)
+	app.Use(LoggerWithOptions(LoggerOptions{Fields: []LogField{LogStatus()}, Sampler: SampleRate(0)}))
+	app.GET("/ok", func(ctx *bebo.Context) error {
+		return ctx.Text(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if len(handler.Levels()) != 0 {
+		t.Fatalf("expected no logs when sampling disabled")
+	}
+}
+
+func TestLoggerSamplingKeepsErrors(t *testing.T) {
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+
+	app := bebo.New(
+		bebo.WithLogger(logger),
+		bebo.WithErrorHandler(func(*bebo.Context, error) {}),
+	)
+	app.Use(LoggerWithOptions(LoggerOptions{Fields: []LogField{LogStatus()}, Sampler: SampleRate(0), ErrorLevel: true}))
+	app.GET("/boom", func(ctx *bebo.Context) error {
+		return apperr.Internal("boom", nil)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	levels := handler.Levels()
+	if len(levels) == 0 {
+		t.Fatalf("expected log entry")
+	}
+	if levels[0] != slog.LevelError {
+		t.Fatalf("expected error level, got %v", levels[0])
+	}
+}

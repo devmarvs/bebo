@@ -20,26 +20,43 @@ func Trace(tracer Tracer) bebo.Middleware {
 
 // TraceOptions configures tracing middleware.
 type TraceOptions struct {
-	Tracer    Tracer
-	SkipPaths []string
+	Tracer     Tracer
+	SkipPaths  []string
+	Sampler    Sampler
+	SampleRate float64
 }
 
 // DefaultTraceOptions returns default tracing options.
 func DefaultTraceOptions(tracer Tracer) TraceOptions {
 	return TraceOptions{
-		Tracer:    tracer,
-		SkipPaths: []string{"/metrics", "/health"},
+		Tracer:     tracer,
+		SkipPaths:  []string{"/metrics", "/health"},
+		SampleRate: 1,
 	}
+}
+
+func normalizeTraceOptions(options TraceOptions) TraceOptions {
+	if options.Sampler == nil {
+		if options.SampleRate == 0 {
+			options.SampleRate = 1
+		}
+		options.Sampler = SampleRate(options.SampleRate)
+	}
+	return options
 }
 
 // TraceWithOptions records request spans with options.
 func TraceWithOptions(options TraceOptions) bebo.Middleware {
+	options = normalizeTraceOptions(options)
 	return func(next bebo.Handler) bebo.Handler {
 		return func(ctx *bebo.Context) error {
 			if options.Tracer == nil {
 				return next(ctx)
 			}
 			if shouldSkipPath(ctx.Request.URL.Path, options.SkipPaths) {
+				return next(ctx)
+			}
+			if options.Sampler != nil && !options.Sampler(ctx) {
 				return next(ctx)
 			}
 

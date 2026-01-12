@@ -42,3 +42,21 @@ func TestTraceWithOptionsSkipPath(t *testing.T) {
 		t.Fatalf("expected 1 trace start, got %d", tracer.starts)
 	}
 }
+
+func TestTraceWithOptionsSampling(t *testing.T) {
+	tracer := &testTracer{}
+	app := bebo.New()
+	app.Use(TraceWithOptions(TraceOptions{Tracer: tracer, Sampler: SampleRate(0)}))
+
+	app.GET("/ok", func(ctx *bebo.Context) error {
+		return ctx.Text(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if tracer.starts != 0 {
+		t.Fatalf("expected 0 trace start, got %d", tracer.starts)
+	}
+}

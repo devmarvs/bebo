@@ -42,4 +42,5 @@ app.UsePre(middleware.MethodOverride(middleware.MethodOverrideOptions{}))
 
 ## Observability and profiling
 - Use pprof endpoints only behind authentication and restricted networks.
+- Configure log/trace sampling for high-traffic endpoints.
 - Include request IDs and trace IDs in logs and pass them through background jobs.

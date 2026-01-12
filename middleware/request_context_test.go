@@ -37,3 +37,25 @@ func TestRequestContextMetadata(t *testing.T) {
 		t.Fatalf("expected tracestate, got %q", meta.Tracestate)
 	}
 }
+
+func TestRequestIDUpdatesMetadata(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	var meta bebo.RequestMetadata
+	handler := func(ctx *bebo.Context) error {
+		meta = bebo.RequestMetadataFromContext(ctx.Request.Context())
+		return nil
+	}
+
+	_, err := testutil.RunMiddleware(t, []bebo.Middleware{RequestContext(), RequestID()}, handler, req)
+	if err != nil {
+		t.Fatalf("middleware: %v", err)
+	}
+
+	if meta.RequestID == "" {
+		t.Fatalf("expected request id to be set")
+	}
+	if got := req.Header.Get(bebo.RequestIDHeader); got == "" {
+		t.Fatalf("expected request id header to be set")
+	}
+}
