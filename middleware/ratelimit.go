@@ -18,11 +18,12 @@ type bucket struct {
 
 // Limiter enforces a token-bucket rate limit.
 type Limiter struct {
-	rate    float64
-	burst   float64
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	ttl     time.Duration
+	rate        float64
+	burst       float64
+	mu          sync.Mutex
+	buckets     map[string]*bucket
+	ttl         time.Duration
+	lastCleanup time.Time
 }
 
 // LimiterOption customizes the limiter.
@@ -56,14 +57,21 @@ func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if l.ttl > 0 && (l.lastCleanup.IsZero() || now.Sub(l.lastCleanup) >= l.ttl) {
+		l.cleanup(now)
+		l.lastCleanup = now
+	}
+
 	b, ok := l.buckets[key]
 	if !ok {
 		b = &bucket{tokens: l.burst, last: now}
 		l.buckets[key] = b
 	}
 
-	if l.ttl > 0 && now.Sub(b.last) > l.ttl {
-		b.tokens = l.burst
+	if l.ttl > 0 && now.Sub(b.last) >= l.ttl {
+		delete(l.buckets, key)
+		b = &bucket{tokens: l.burst, last: now}
+		l.buckets[key] = b
 	}
 
 	elapsed := now.Sub(b.last).Seconds()
@@ -79,6 +87,17 @@ func (l *Limiter) Allow(key string) bool {
 
 	b.tokens -= 1
 	return true
+}
+
+func (l *Limiter) cleanup(now time.Time) {
+	if l.ttl <= 0 {
+		return
+	}
+	for key, entry := range l.buckets {
+		if now.Sub(entry.last) >= l.ttl {
+			delete(l.buckets, key)
+		}
+	}
 }
 
 // AllowFunc evaluates whether a request should proceed.

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"container/heap"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -14,6 +15,37 @@ type memoryEntry struct {
 	expiresAt time.Time
 }
 
+type expirationEntry struct {
+	id        string
+	expiresAt time.Time
+}
+
+type expirationHeap []expirationEntry
+
+func (h expirationHeap) Len() int {
+	return len(h)
+}
+
+func (h expirationHeap) Less(i, j int) bool {
+	return h[i].expiresAt.Before(h[j].expiresAt)
+}
+
+func (h expirationHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *expirationHeap) Push(x any) {
+	*h = append(*h, x.(expirationEntry))
+}
+
+func (h *expirationHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
+}
+
 // MemoryStore stores sessions in memory and uses a session ID cookie.
 type MemoryStore struct {
 	Name     string
@@ -23,8 +55,9 @@ type MemoryStore struct {
 	HTTPOnly bool
 	SameSite http.SameSite
 
-	mu       sync.RWMutex
-	sessions map[string]memoryEntry
+	mu          sync.RWMutex
+	sessions    map[string]memoryEntry
+	expirations expirationHeap
 }
 
 // MemoryOption configures a MemoryStore.
@@ -77,6 +110,9 @@ func NewMemoryStore(name string, ttl time.Duration, options ...MemoryOption) *Me
 // Get loads a session from the request.
 func (s *MemoryStore) Get(r *http.Request) (*Session, error) {
 	values := map[string]string{}
+	now := time.Now()
+	s.maybeCleanup(now)
+
 	cookie, err := r.Cookie(s.Name)
 	if err != nil || cookie.Value == "" {
 		id, err := newSessionID()
@@ -90,10 +126,13 @@ func (s *MemoryStore) Get(r *http.Request) (*Session, error) {
 	s.mu.RLock()
 	entry, ok := s.sessions[id]
 	s.mu.RUnlock()
-	if !ok || s.isExpired(entry) {
+	if !ok || s.isExpired(entry, now) {
 		if ok {
 			s.mu.Lock()
-			delete(s.sessions, id)
+			entry, ok = s.sessions[id]
+			if ok && s.isExpired(entry, now) {
+				delete(s.sessions, id)
+			}
 			s.mu.Unlock()
 		}
 		newID, err := newSessionID()
@@ -121,12 +160,14 @@ func (s *MemoryStore) Save(w http.ResponseWriter, session *Session) error {
 		session.ID = id
 	}
 
+	now := time.Now()
 	entry := memoryEntry{values: copyValues(session.Values)}
-	if s.TTL > 0 {
-		entry.expiresAt = time.Now().Add(s.TTL)
-	}
-
 	s.mu.Lock()
+	s.cleanupExpiredLocked(now)
+	if s.TTL > 0 {
+		entry.expiresAt = now.Add(s.TTL)
+		heap.Push(&s.expirations, expirationEntry{id: id, expiresAt: entry.expiresAt})
+	}
 	s.sessions[id] = entry
 	s.mu.Unlock()
 
@@ -175,8 +216,46 @@ func (s *MemoryStore) Clear(w http.ResponseWriter, session *Session) {
 	}
 }
 
-func (s *MemoryStore) isExpired(entry memoryEntry) bool {
-	return !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt)
+func (s *MemoryStore) maybeCleanup(now time.Time) {
+	if s.TTL <= 0 {
+		return
+	}
+	s.mu.RLock()
+	needsCleanup := len(s.expirations) > 0 && !s.expirations[0].expiresAt.After(now)
+	s.mu.RUnlock()
+	if !needsCleanup {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupExpiredLocked(now)
+}
+
+func (s *MemoryStore) cleanupExpiredLocked(now time.Time) {
+	if s.TTL <= 0 {
+		return
+	}
+	for len(s.expirations) > 0 {
+		entry := s.expirations[0]
+		if entry.expiresAt.After(now) {
+			break
+		}
+		heap.Pop(&s.expirations)
+		stored, ok := s.sessions[entry.id]
+		if !ok {
+			continue
+		}
+		if !stored.expiresAt.Equal(entry.expiresAt) {
+			continue
+		}
+		if s.isExpired(stored, now) {
+			delete(s.sessions, entry.id)
+		}
+	}
+}
+
+func (s *MemoryStore) isExpired(entry memoryEntry, now time.Time) bool {
+	return !entry.expiresAt.IsZero() && !now.Before(entry.expiresAt)
 }
 
 func newSessionID() (string, error) {

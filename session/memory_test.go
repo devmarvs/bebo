@@ -53,3 +53,32 @@ func TestMemoryStoreLifecycle(t *testing.T) {
 		t.Fatalf("expected new session after clear")
 	}
 }
+
+func TestMemoryStoreCleanupRemovesExpired(t *testing.T) {
+	store := NewMemoryStore("bebo_session", 20*time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	sess, err := store.Get(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	sess.Set("user", "123")
+	rec := httptest.NewRecorder()
+	if err := sess.Save(rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if got := len(store.sessions); got != 1 {
+		t.Fatalf("expected 1 session, got %d", got)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	if _, err := store.Get(req2); err != nil {
+		t.Fatalf("get after ttl: %v", err)
+	}
+	if got := len(store.sessions); got != 0 {
+		t.Fatalf("expected expired session cleanup, got %d", got)
+	}
+}
