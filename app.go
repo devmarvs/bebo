@@ -533,10 +533,15 @@ func defaultErrorHandler(ctx *Context, err error) {
 		message = appErr.Message
 	}
 
-	ctx.Logger().Error("request failed",
+	logAttrs := []slog.Attr{
 		slog.String("code", code),
 		slog.String("error", err.Error()),
-	)
+	}
+	if status >= http.StatusInternalServerError {
+		ctx.Logger().Error("request failed", logAttrs...)
+	} else {
+		ctx.Logger().Info("request failed", logAttrs...)
+	}
 
 	var fields []validate.FieldError
 	if validationErrors, ok := validate.As(err); ok {

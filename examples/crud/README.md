@@ -4,7 +4,7 @@ This example demonstrates CRUD routes, sessions, form auth, and migrations.
 
 ## Prerequisites
 - PostgreSQL running locally
-- Go 1.25
+- Go 1.23 or newer
 
 ## Setup
 ```sh

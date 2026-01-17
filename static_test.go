@@ -61,3 +61,25 @@ func TestStaticFS(t *testing.T) {
 		t.Fatalf("expected body %q, got %q", "ok", rec.Body.String())
 	}
 }
+
+func TestFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(path, []byte("home"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	app := New()
+	app.File("/", path, StaticETag(false))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "home" {
+		t.Fatalf("expected body %q, got %q", "home", rec.Body.String())
+	}
+}

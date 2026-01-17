@@ -7,7 +7,7 @@ bebo is a batteries-included Go framework focused on building REST APIs and serv
 - Desktop helpers live in `desktop/` and depend on Fyne.
 
 ## Requirements
-- Go 1.25 (as requested). If you are on a released Go toolchain, downgrade the `go` directive in `go.mod`.
+- Go 1.23 or newer.
 
 ## Features
 - Custom router with params (`/users/:id`), wildcards (`/assets/*path`), groups, and host-based routing
@@ -105,6 +105,7 @@ app.GET("/openapi.json", func(ctx *bebo.Context) error {
 ```go
 app.Static("/static", "./public")
 app.StaticFS("/static", staticFS)
+app.File("/", "./public/index.html")
 ```
 
 ## Middleware Examples

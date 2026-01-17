@@ -382,7 +382,7 @@ func migrateDownCmd(args []string) {
 }
 
 func goMod(module, version string) string {
-	return fmt.Sprintf("module %s\n\ngo 1.25\n\nrequire github.com/devmarvs/bebo %s\n", module, version)
+	return fmt.Sprintf("module %s\n\ngo 1.23\n\nrequire github.com/devmarvs/bebo %s\n", module, version)
 }
 
 func mainGo(kind, module string, withProfile bool) string {

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +43,30 @@ func StaticIndex(name string) StaticOption {
 	return func(cfg *staticConfig) {
 		cfg.indexFile = name
 	}
+}
+
+// File registers a static route for a single file on disk.
+func (a *App) File(route, filePath string, options ...StaticOption) {
+	cfg := staticConfig{
+		cacheControl: "public, max-age=86400",
+		etag:         true,
+	}
+	for _, opt := range options {
+		opt(&cfg)
+	}
+
+	if filePath == "" {
+		return
+	}
+
+	dir := filepath.Dir(filePath)
+	rel := filepath.Base(filePath)
+	handler := func(ctx *Context) error {
+		return serveStatic(ctx, dir, rel, cfg)
+	}
+
+	a.GET(route, handler)
+	a.HEAD(route, handler)
 }
 
 // Static registers a static file route.

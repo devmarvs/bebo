@@ -3,7 +3,7 @@
 Thanks for contributing to bebo.
 
 ## Development
-- Go 1.25 (or update `go.mod` to a supported version)
+- Go 1.23 or newer
 - Run tests: `go test ./...`
 
 ## Pull Requests
