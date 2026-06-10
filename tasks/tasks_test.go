@@ -116,6 +116,44 @@ func TestEnqueueGuards(t *testing.T) {
 	}
 }
 
+func TestShutdownUnblocksPendingEnqueue(t *testing.T) {
+	runner := New(Options{QueueSize: 1})
+	job := Job{Name: "queued", Handler: func(context.Context) error { return nil }}
+
+	if err := runner.Enqueue(job); err != nil {
+		t.Fatalf("enqueue first job: %v", err)
+	}
+
+	enqueueDone := make(chan error, 1)
+	go func() {
+		enqueueDone <- runner.Enqueue(job)
+	}()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runner.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	select {
+	case err := <-enqueueDone:
+		if !errors.Is(err, ErrRunnerClosed) {
+			t.Fatalf("expected closed error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending enqueue did not return")
+	}
+}
+
+func TestEnqueueContextAcceptsNilContext(t *testing.T) {
+	runner := New(Options{QueueSize: 1})
+	job := Job{Name: "queued", Handler: func(context.Context) error { return nil }}
+
+	if err := runner.EnqueueContext(nil, job); err != nil {
+		t.Fatalf("enqueue with nil context: %v", err)
+	}
+}
+
 func TestRunnerUsesJobContext(t *testing.T) {
 	runner := New(Options{QueueSize: 1})
 	runner.Start(context.Background())

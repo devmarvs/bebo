@@ -100,19 +100,22 @@ func DefaultOptions() Options {
 type Runner struct {
 	opts      runnerOptions
 	queue     chan Job
+	closing   chan struct{}
 	startOnce sync.Once
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
-	wg        sync.WaitGroup
+	enqueueWG sync.WaitGroup
+	workerWG  sync.WaitGroup
 }
 
 // New creates a new Runner.
 func New(options Options) *Runner {
 	opts := normalizeOptions(options)
 	return &Runner{
-		opts:  opts,
-		queue: make(chan Job, opts.queueSize),
+		opts:    opts,
+		queue:   make(chan Job, opts.queueSize),
+		closing: make(chan struct{}),
 	}
 }
 
@@ -123,8 +126,14 @@ func (r *Runner) Start(ctx context.Context) {
 	}
 
 	r.startOnce.Do(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.closed {
+			return
+		}
+
 		for i := 0; i < r.opts.workers; i++ {
-			r.wg.Add(1)
+			r.workerWG.Add(1)
 			go r.worker(ctx)
 		}
 	})
@@ -140,14 +149,26 @@ func (r *Runner) EnqueueContext(ctx context.Context, job Job) error {
 	if job.Handler == nil {
 		return ErrHandlerMissing
 	}
-	if r.isClosed() {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
 		return ErrRunnerClosed
 	}
+	r.enqueueWG.Add(1)
+	r.mu.Unlock()
+	defer r.enqueueWG.Done()
+
 	select {
 	case r.queue <- job:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-r.closing:
+		return ErrRunnerClosed
 	}
 }
 
@@ -160,13 +181,16 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
 		r.closed = true
-		close(r.queue)
+		close(r.closing)
 		r.mu.Unlock()
+
+		r.enqueueWG.Wait()
+		close(r.queue)
 	})
 
 	done := make(chan struct{})
 	go func() {
-		r.wg.Wait()
+		r.workerWG.Wait()
 		close(done)
 	}()
 
@@ -179,7 +203,7 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 }
 
 func (r *Runner) worker(ctx context.Context) {
-	defer r.wg.Done()
+	defer r.workerWG.Done()
 	for job := range r.queue {
 		r.runJob(ctx, job)
 	}
@@ -268,12 +292,6 @@ func (r *Runner) runJob(ctx context.Context, job Job) {
 			}
 		}
 	}
-}
-
-func (r *Runner) isClosed() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.closed
 }
 
 func normalizeOptions(options Options) runnerOptions {
